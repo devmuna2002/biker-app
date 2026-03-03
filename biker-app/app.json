@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Biker",
+    "slug": "biker-app",
+    "version": "1.0.0",
+    "scheme": "biker",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0B0B"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.biker.delivery",
+      "buildNumber": "1"
+    },
+    "android": {
+      "supportsTablet": true,
+      "package": "com.biker.delivery",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0B0B"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "author": "Clever M Antonio",
+      "eas": {
+        "projectId": "biker-app"
+      }
+    },
+    "plugins": [
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.biker.app",
+          "enableGooglePay": true
+        }
+      ]
+    ]
+  }
+}

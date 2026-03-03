@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-biker_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - biker_pg_data:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - biker_redis_data:/data
+
+volumes:
+  biker_pg_data:
+  biker_redis_data:
