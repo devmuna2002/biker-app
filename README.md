@@ -77,8 +77,16 @@ The project is organized as a monorepo-style structure for ease of development:
 
 ---
 
-## 👨‍💻 Author
-**Clever M Antonio** ([devmuna2002](https://github.com/devmuna2002))
+## 👨‍💻 Developed By
+
+**Clever M Antonio**  
+*Senior Full-Stack Engineer | Specialized in Scalable Mobile & Backend Architectures*
+
+A results-driven software architect with a passion for building high-performance, real-time logistics solutions. Focused on bridge-building between complex backend systems and intuitive mobile experiences.
+
+[![GitHub](https://img.shields.io/badge/GitHub-devmuna2002-181717?style=flat-square&logo=github)](https://github.com/devmuna2002)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Professional_Profile-0A66C2?style=flat-square&logo=linkedin)](#) <!-- Replace with your actual LinkedIn link if available -->
+
 
 ---
 
