@@ -4,6 +4,7 @@ import { DrawerContentScrollView, DrawerItem, useDrawerStatus } from '@react-nav
 import { Avatar, Text, IconButton, Divider, useTheme } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import SheetService from '../api/SheetService';
+import { bi } from './AppIcon';
 
 const CustomDrawerContent = (props) => {
     const theme = useTheme();
@@ -50,7 +51,7 @@ const CustomDrawerContent = (props) => {
                             <Avatar.Text size={60} label={user.name[0]} backgroundColor={theme.colors.primary} color={theme.colors.onPrimary || '#FFF'} />
                         )}
                         <View style={[styles.editBadge, { backgroundColor: theme.colors.secondary }]}>
-                            <IconButton icon="pencil" size={10} iconColor="#000" />
+                            <IconButton icon={bi('pencil')} size={10} iconColor="#000" />
                         </View>
                     </View>
                     <View style={styles.userInfo}>
@@ -67,21 +68,21 @@ const CustomDrawerContent = (props) => {
 
                 <DrawerItem
                     label="Request history"
-                    icon={({ color, size }) => <IconButton icon="history" size={20} iconColor={theme.colors.primary} />}
+                    icon={({ color, size }) => <IconButton icon={bi('history')} size={20} iconColor={theme.colors.primary} />}
                     onPress={() => props.navigation.navigate('RequestHistory')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
                 <DrawerItem
                     label="Send a Package"
-                    icon={({ color, size }) => <IconButton icon="package-variant-closed" size={20} iconColor={theme.colors.primary} />}
+                    icon={({ color, size }) => <IconButton icon={bi('package-variant-closed')} size={20} iconColor={theme.colors.primary} />}
                     onPress={() => props.navigation.navigate('HomeDrawer', { screen: 'Couriers' })}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
                 <DrawerItem
                     label="Local Services"
-                    icon={({ color, size }) => <IconButton icon="store" size={20} iconColor={theme.colors.primary} />}
+                    icon={({ color, size }) => <IconButton icon={bi('store')} size={20} iconColor={theme.colors.primary} />}
                     onPress={() => props.navigation.navigate('HomeDrawer', { screen: 'CityToCity' })}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
@@ -90,7 +91,7 @@ const CustomDrawerContent = (props) => {
                     label="Notifications"
                     icon={({ color, size }) => (
                         <View>
-                            <IconButton icon="bell-outline" size={20} iconColor={theme.colors.primary} />
+                            <IconButton icon={bi('bell-outline')} size={20} iconColor={theme.colors.primary} />
                             {notificationCount > 0 && (
                                 <View style={[styles.badge, { backgroundColor: theme.colors.error }]}>
                                     <Text style={styles.badgeText}>{notificationCount}</Text>
@@ -104,7 +105,7 @@ const CustomDrawerContent = (props) => {
                 />
                 <DrawerItem
                     label="Messages"
-                    icon={({ color, size }) => <IconButton icon="chat-outline" size={20} iconColor={theme.colors.primary} />}
+                    icon={({ color, size }) => <IconButton icon={bi('chat-outline')} size={20} iconColor={theme.colors.primary} />}
                     onPress={() => props.navigation.navigate('ChatList')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
@@ -114,28 +115,28 @@ const CustomDrawerContent = (props) => {
 
                 <DrawerItem
                     label="Safety"
-                    icon={({ color, size }) => <IconButton icon="shield-check-outline" size={20} iconColor={theme.colors.secondary} />}
+                    icon={({ color, size }) => <IconButton icon={bi('shield-check-outline')} size={20} iconColor={theme.colors.secondary} />}
                     onPress={() => props.navigation.navigate('Safety')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
                 <DrawerItem
                     label="Settings"
-                    icon={({ color, size }) => <IconButton icon="cog-outline" size={20} iconColor={theme.colors.secondaryText} />}
+                    icon={({ color, size }) => <IconButton icon={bi('cog-outline')} size={20} iconColor={theme.colors.secondaryText} />}
                     onPress={() => props.navigation.navigate('ProfileSettings')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
                 <DrawerItem
                     label="Help"
-                    icon={({ color, size }) => <IconButton icon="information-outline" size={20} iconColor={theme.colors.secondaryText} />}
+                    icon={({ color, size }) => <IconButton icon={bi('information-outline')} size={20} iconColor={theme.colors.secondaryText} />}
                     onPress={() => props.navigation.navigate('Help')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
                 <DrawerItem
                     label="Support"
-                    icon={({ color, size }) => <IconButton icon="message-outline" size={20} iconColor={theme.colors.secondaryText} />}
+                    icon={({ color, size }) => <IconButton icon={bi('message-outline')} size={20} iconColor={theme.colors.secondaryText} />}
                     onPress={() => props.navigation.navigate('Support')}
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
@@ -147,7 +148,7 @@ const CustomDrawerContent = (props) => {
 
                 <DrawerItem
                     label="Logout"
-                    icon={({ color, size }) => <IconButton icon="logout" size={20} iconColor={theme.colors.error} />}
+                    icon={({ color, size }) => <IconButton icon={bi('logout')} size={20} iconColor={theme.colors.error} />}
                     onPress={async () => {
                         await SheetService.logout();
                         props.navigation.reset({
@@ -167,8 +168,8 @@ const CustomDrawerContent = (props) => {
                     resizeMode="contain"
                 />
                 <View style={styles.socialRow}>
-                    <IconButton icon="facebook" size={24} iconColor="#1877F2" />
-                    <IconButton icon="instagram" size={24} iconColor="#E4405F" />
+                    <IconButton icon={bi('facebook')} size={24} iconColor="#1877F2" />
+                    <IconButton icon={bi('instagram')} size={24} iconColor="#E4405F" />
                 </View>
                 <Text style={styles.versionText}>v1.0.4 Premium</Text>
             </View>

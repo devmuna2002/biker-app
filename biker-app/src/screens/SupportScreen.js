@@ -3,6 +3,7 @@ import { View, StyleSheet, ScrollView, Linking, TextInput, Alert } from 'react-n
 import { Text, IconButton, Surface, useTheme, Button } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 const SupportScreen = ({ navigation }) => {
     const theme = useTheme();
@@ -37,7 +38,7 @@ const SupportScreen = ({ navigation }) => {
     const ContactOption = ({ icon, title, subtitle, action }) => (
         <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={2}>
             <View style={styles.row}>
-                <IconButton icon={icon} size={32} iconColor={theme.colors.secondary} />
+                <IconButton icon={bi(icon)} size={32} iconColor={theme.colors.secondary} />
                 <View style={styles.content}>
                     <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
                     <Text style={[styles.subtitle, { color: theme.colors.secondaryText || '#7F8C8D' }]}>{subtitle}</Text>
@@ -51,7 +52,7 @@ const SupportScreen = ({ navigation }) => {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
                 <IconButton
-                    icon="arrow-left"
+                    icon={bi('arrow-left')}
                     size={24}
                     onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainApp')}
                     iconColor={theme.colors.text}
@@ -66,19 +67,19 @@ const SupportScreen = ({ navigation }) => {
                 </Text>
 
                 <ContactOption
-                    icon="chat-processing"
+                    icon={bi('chat-processing')}
                     title="Live Chat"
                     subtitle="Chat with a support agent now"
                     action={() => navigation.navigate('Chat', { recipientName: 'Support', recipientRole: 'support' })}
                 />
                 <ContactOption
-                    icon="email-outline"
+                    icon={bi('email-outline')}
                     title="Email Support"
                     subtitle="support@bikerapp.com"
                     action={() => Linking.openURL('mailto:support@bikerapp.com')}
                 />
                 <ContactOption
-                    icon="phone-outline"
+                    icon={bi('phone-outline')}
                     title="Call Us"
                     subtitle="+263 77 123 4567"
                     action={() => {
@@ -97,7 +98,7 @@ const SupportScreen = ({ navigation }) => {
                     }}
                 />
                 <ContactOption
-                    icon="shield-alert"
+                    icon={bi('shield-alert')}
                     title="Safety Issue"
                     description="Report a safety concern"
                     action={() => navigation.navigate('Safety')}

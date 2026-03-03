@@ -3,6 +3,7 @@ import { View, StyleSheet, ScrollView, Linking, TextInput, Alert, TouchableOpaci
 import { Text, IconButton, Surface, useTheme, Button, Divider } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 import * as Location from 'expo-location';
 
 const SafetyScreen = ({ navigation }) => {
@@ -120,7 +121,7 @@ const SafetyScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
-                <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
+                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Safety Tools</Text>
                 <View style={{ width: 48 }} />
             </View>
@@ -133,7 +134,7 @@ const SafetyScreen = ({ navigation }) => {
                             <ActivityIndicator size="large" color="#FFF" />
                         ) : (
                             <>
-                                <IconButton icon="alarm-light" size={48} iconColor="#FFF" style={{ margin: 0 }} />
+                                <IconButton icon={bi('alarm-light')} size={48} iconColor="#FFF" style={{ margin: 0 }} />
                                 <Text style={styles.sosLabel}>SOS</Text>
                                 <Text style={styles.sosSub}>Tap to alert trusted contacts + emergency services</Text>
                             </>
@@ -144,10 +145,10 @@ const SafetyScreen = ({ navigation }) => {
                 {/* Trusted Contacts */}
                 <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={2}>
                     <View style={styles.cardHeader}>
-                        <IconButton icon="account-group" size={22} iconColor="#3498DB" style={{ margin: 0 }} />
+                        <IconButton icon={bi('account-group')} size={22} iconColor="#3498DB" style={{ margin: 0 }} />
                         <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Trusted Contacts</Text>
                         <IconButton
-                            icon={showAddForm ? 'close' : 'plus'}
+                            icon={bi(showAddForm ? 'close' : 'plus')}
                             size={20}
                             iconColor={theme.colors.secondary}
                             onPress={() => setShowAddForm(v => !v)}
@@ -199,10 +200,10 @@ const SafetyScreen = ({ navigation }) => {
                                     <Text style={styles.contactPhone}>{c.phone}</Text>
                                 </View>
                                 <TouchableOpacity onPress={() => Linking.openURL(`tel:${c.phone}`)}>
-                                    <IconButton icon="phone" size={20} iconColor="#2ECC71" />
+                                    <IconButton icon={bi('phone')} size={20} iconColor="#2ECC71" />
                                 </TouchableOpacity>
                                 <TouchableOpacity onPress={() => removeContact(c.id)}>
-                                    <IconButton icon="delete-outline" size={20} iconColor="#E74C3C" />
+                                    <IconButton icon={bi('delete-outline')} size={20} iconColor="#E74C3C" />
                                 </TouchableOpacity>
                             </View>
                         ))
@@ -215,17 +216,17 @@ const SafetyScreen = ({ navigation }) => {
                         style={[styles.quickLink, { backgroundColor: theme.colors.surface }]}
                         onPress={() => navigation.navigate('Support')}
                     >
-                        <IconButton icon="shield-alert" size={24} iconColor="#E74C3C" style={{ margin: 0 }} />
+                        <IconButton icon={bi('shield-alert')} size={24} iconColor="#E74C3C" style={{ margin: 0 }} />
                         <Text style={[styles.quickLinkText, { color: theme.colors.text }]}>Report Incident</Text>
-                        <IconButton icon="chevron-right" size={18} iconColor="#555" style={{ margin: 0 }} />
+                        <IconButton icon={bi('chevron-right')} size={18} iconColor="#555" style={{ margin: 0 }} />
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.quickLink, { backgroundColor: theme.colors.surface }]}
                         onPress={() => Linking.openURL('tel:999')}
                     >
-                        <IconButton icon="phone-alert" size={24} iconColor="#E74C3C" style={{ margin: 0 }} />
+                        <IconButton icon={bi('phone-alert')} size={24} iconColor="#E74C3C" style={{ margin: 0 }} />
                         <Text style={[styles.quickLinkText, { color: theme.colors.text }]}>Emergency: 999</Text>
-                        <IconButton icon="chevron-right" size={18} iconColor="#555" style={{ margin: 0 }} />
+                        <IconButton icon={bi('chevron-right')} size={18} iconColor="#555" style={{ margin: 0 }} />
                     </TouchableOpacity>
                 </View>
 
@@ -236,7 +237,7 @@ const SafetyScreen = ({ navigation }) => {
                 ) : (
                     tips.map((tip, i) => (
                         <Surface key={tip.id || i} style={[styles.tipCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
-                            <IconButton icon={tip.icon || 'alert-circle'} size={22} iconColor={theme.colors.secondary} style={{ margin: 0 }} />
+                            <IconButton icon={bi(tip.icon || 'alert-circle')} size={22} iconColor={theme.colors.secondary} style={{ margin: 0 }} />
                             <View style={{ flex: 1, marginLeft: 12 }}>
                                 <Text style={[styles.tipTitle, { color: theme.colors.text }]}>{tip.title}</Text>
                                 <Text style={styles.tipBody}>{tip.body}</Text>

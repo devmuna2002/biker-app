@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text, IconButton, Surface, useTheme, Avatar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { bi } from '../components/AppIcon';
 
 const ChatListScreen = ({ navigation }) => {
     const theme = useTheme();
@@ -9,17 +10,17 @@ const ChatListScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
-                <IconButton 
-                    icon="arrow-left" 
-                    size={24} 
-                    onPress={() => navigation.goBack()} 
-                    iconColor={theme.colors.text} 
+                <IconButton
+                    icon={bi('arrow-left')}
+                    size={24}
+                    onPress={() => navigation.goBack()}
+                    iconColor={theme.colors.text}
                 />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Messages</Text>
                 <View style={{ width: 48 }} />
             </View>
 
-            <View style={[styles.empty, { backgroundColor: theme.colors.surface }]}> 
+            <View style={[styles.empty, { backgroundColor: theme.colors.surface }]}>
                 <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>Chat not enabled</Text>
                 <Text style={[styles.emptyText, { color: theme.colors.secondaryText }]}>This build does not include a messaging backend. Use phone/SMS or Support instead.</Text>
             </View>

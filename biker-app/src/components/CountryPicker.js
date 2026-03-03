@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, StyleSheet, Modal, FlatList, TouchableOpacity, SearchBar } from 'react-native';
 import { Text, Surface, IconButton, Searchbar, useTheme } from 'react-native-paper';
 import { countries } from '../data/countries';
+import { bi } from './AppIcon';
 
 const CountryPicker = ({ visible, onDismiss, onSelect }) => {
     const theme = useTheme();
@@ -23,7 +24,7 @@ const CountryPicker = ({ visible, onDismiss, onSelect }) => {
                 <Surface style={[styles.modalContent, { backgroundColor: '#121212' }]}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Select Country</Text>
-                        <IconButton icon="close" iconColor="#FFF" onPress={onDismiss} />
+                        <IconButton icon={bi('close')} iconColor="#FFF" onPress={onDismiss} />
                     </View>
 
                     <Searchbar

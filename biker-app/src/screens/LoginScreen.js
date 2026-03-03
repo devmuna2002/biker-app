@@ -12,6 +12,7 @@ import Animated, {
 import CustomInput from '../components/CustomInput';
 import CustomButton from '../components/CustomButton';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 import BrandMark from '../components/BrandMark';
 
 const LoginScreen = ({ navigation, route }) => {
@@ -168,10 +169,10 @@ const LoginScreen = ({ navigation, route }) => {
 
                     <Animated.View entering={FadeInDown.delay(400).duration(800)} style={styles.socialContainer}>
                         <TouchableOpacity style={styles.socialButton} onPress={() => handleSocialLogin('Google')}>
-                            <IconButton icon="google" size={24} iconColor="#FFF" />
+                            <IconButton icon={bi('google')} size={24} iconColor="#FFF" />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.socialButton} onPress={() => handleSocialLogin('Apple')}>
-                            <IconButton icon="apple" size={24} iconColor="#FFF" />
+                            <IconButton icon={bi('apple')} size={24} iconColor="#FFF" />
                         </TouchableOpacity>
                     </Animated.View>
 

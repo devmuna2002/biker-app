@@ -74,4 +74,69 @@ export class TrackingGateway implements OnGatewayInit, OnGatewayConnection, OnGa
             client.join(`order_${data.orderId}`);
         }
     }
+
+    // ── Chat: join a chat room ──
+    @SubscribeMessage('join_chat')
+    handleJoinChat(@MessageBody() data: { room: string; userId: string | number; orderId?: number }, @ConnectedSocket() client: Socket) {
+        if (data?.room) {
+            client.join(data.room);
+            console.log(`[WS] User ${data.userId} joined chat room ${data.room}`);
+        }
+        // Also auto-join order-scoped chat room if orderId is provided
+        if (data?.orderId) {
+            const orderRoom = `chat_${data.orderId}`;
+            client.join(orderRoom);
+        }
+    }
+
+    // ── Chat: relay text/image messages to everyone in the room ──
+    @SubscribeMessage('chat_message')
+    handleChatMessage(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+        const room = data?.room;
+        if (!room) return;
+
+        const payload = {
+            id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            room,
+            orderId: data.orderId,
+            text: data.text,
+            senderId: data.senderId,
+            senderName: data.senderName,
+            timestamp: new Date().toISOString(),
+        };
+
+        // Broadcast to everyone in the room EXCEPT the sender
+        client.to(room).emit('new_message', payload);
+        console.log(`[WS Chat] Message in ${room} from ${data.senderName}: ${(data.text || '').substring(0, 50)}`);
+    }
+
+    // ── Chat: relay media (images, audio) to everyone in the room ──
+    @SubscribeMessage('chat_media')
+    handleChatMedia(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+        const room = data?.room;
+        if (!room) return;
+
+        const payload = {
+            id: `media-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            room,
+            orderId: data.orderId,
+            type: data.mediaType || 'image', // 'image' or 'audio'
+            image: data.mediaType === 'image' ? data.mediaUri : undefined,
+            audio: data.mediaType === 'audio' ? data.mediaUri : undefined,
+            senderId: data.senderId,
+            senderName: data.senderName,
+            timestamp: new Date().toISOString(),
+        };
+
+        client.to(room).emit('new_message', payload);
+        console.log(`[WS Chat] Media (${data.mediaType}) in ${room} from ${data.senderName}`);
+    }
+
+    // ── Chat: typing indicator relay ──
+    @SubscribeMessage('user_typing')
+    handleUserTyping(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+        const room = data?.room;
+        if (!room) return;
+        client.to(room).emit('user_typing', { senderId: data.senderId });
+    }
 }

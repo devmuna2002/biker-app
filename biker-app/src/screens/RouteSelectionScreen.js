@@ -4,6 +4,7 @@ import { Text, IconButton, Divider, useTheme } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 const OSRM_HOST = 'https://router.project-osrm.org';
@@ -389,7 +390,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                 setTo(label || '');
             }}
         >
-            <IconButton icon="history" size={24} iconColor={theme.colors.secondaryText} />
+            <IconButton icon={bi('history')} size={24} iconColor={theme.colors.secondaryText} />
             <View style={styles.locationTextContainer}>
                 <Text style={[styles.locationName, { color: theme.colors.text }]}>{item.label || item.name}</Text>
                 <Text style={[styles.locationCity, { color: theme.colors.secondaryText }]}>{item.city}</Text>
@@ -432,7 +433,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
                 <IconButton
-                    icon="close"
+                    icon={bi('close')}
                     size={28}
                     onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainApp')}
                     iconColor={theme.colors.text}
@@ -463,7 +464,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                             </View>
                             <Divider style={{ backgroundColor: theme.colors.outline }} />
                             <View style={[styles.inputBoxActive, { height: 50 }]}>
-                                <IconButton icon="magnify" size={20} style={styles.searchIcon} iconColor={theme.colors.placeholder} />
+                                <IconButton icon={bi('magnify')} size={20} style={styles.searchIcon} iconColor={theme.colors.placeholder} />
                                 <TextInput
                                     ref={inputRef}
                                     style={[styles.input, { color: theme.colors.text, flex: 1 }]}
@@ -483,7 +484,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                                 )}
                                 {to.length > 0 && !loading && (
                                     <IconButton
-                                        icon="close-circle"
+                                        icon={bi('close-circle')}
                                         size={18}
                                         iconColor={theme.colors.secondaryText}
                                         style={{ margin: 0 }}
@@ -505,7 +506,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                                 style={[styles.recentItem, { borderBottomColor: theme.colors.outline }]}
                             >
                                 <IconButton
-                                    icon={getCategoryIcon(s.category, s.type)}
+                                    icon={bi(getCategoryIcon(s.category, s.type))}
                                     size={22}
                                     iconColor={theme.colors.primary}
                                     style={{ margin: 0, marginRight: 4 }}
@@ -528,14 +529,14 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                     style={styles.pinHintButton}
                     onPress={() => navigation.goBack()}
                 >
-                    <IconButton icon="map-marker-plus" size={18} iconColor="#00C853" style={{ margin: 0 }} />
+                    <IconButton icon={bi('map-marker-plus')} size={18} iconColor="#00C853" style={{ margin: 0 }} />
                     <Text style={styles.pinHintText}>Long-press map to pin location</Text>
                 </TouchableOpacity>
 
                 {/* No results hint */}
                 {!loading && to.length > 2 && suggestions.length === 0 && (
                     <View style={styles.noResultsBox}>
-                        <IconButton icon="map-search-outline" size={32} iconColor="#555" />
+                        <IconButton icon={bi('map-search-outline')} size={32} iconColor="#555" />
                         <Text style={{ color: '#555', textAlign: 'center', fontSize: 13 }}>
                             No results for "{to}".{'\n'}Try a street name, suburb, or city.
                         </Text>
@@ -543,7 +544,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                             style={styles.pinButton}
                             onPress={() => navigation.goBack()}
                         >
-                            <IconButton icon="map-marker-radius" size={20} iconColor="#fff" style={{ margin: 0 }} />
+                            <IconButton icon={bi('map-marker-radius')} size={20} iconColor="#fff" style={{ margin: 0 }} />
                             <Text style={styles.pinButtonText}>Select on Map</Text>
                         </TouchableOpacity>
                     </View>

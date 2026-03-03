@@ -8,6 +8,7 @@ import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Switch } from 'react-native-paper';
 import { useAppTheme } from '../context/ThemeContext';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 import mapStyle from '../theme/mapStyle.json';
 
 const ProfileSettingsScreen = ({ navigation }) => {
@@ -315,7 +316,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={[styles.header, { borderBottomColor: theme.colors.outline }]}>
                 <IconButton
-                    icon="arrow-left"
+                    icon={bi('arrow-left')}
                     size={28}
                     onPress={() => {
                         if (navigation.canGoBack()) {
@@ -340,7 +341,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                             <Avatar.Text size={100} label={name[0] || 'U'} backgroundColor={theme.colors.primary} color={theme.colors.onPrimary} />
                         )}
                         <View style={[styles.plusButton, { backgroundColor: theme.colors.secondary }]}>
-                            <IconButton icon="camera" size={20} iconColor="#000" />
+                            <IconButton icon={bi('camera')} size={20} iconColor="#000" />
                         </View>
                     </TouchableOpacity>
                     <Text style={[styles.changePhotoText, { color: theme.colors.primary }]}>Change Photo</Text>
@@ -395,29 +396,24 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                     <Avatar.Image size={120} source={{ uri: licensePhoto }} style={{ borderRadius: 8 }} />
                                 ) : (
                                     <View style={styles.uploadPlaceholder}>
-                                        <IconButton icon="camera-plus" size={40} iconColor={theme.colors.primary} />
+                                        <IconButton icon={bi('camera-plus')} size={40} iconColor={theme.colors.primary} />
                                         <Text style={{ color: theme.colors.secondaryText, fontSize: 12 }}>Tap to capture/upload</Text>
                                     </View>
                                 )}
                             </TouchableOpacity>
 
                             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-                                <Text style={[styles.label, { color: theme.colors.secondaryText }]}>Status: </Text>
+                                <Text style={[styles.label, { color: theme.colors.secondaryText }]}>Account: </Text>
                                 <Badge
                                     style={{
-                                        backgroundColor: verificationStatus === 'approved' ? '#2ECC71' : (verificationStatus === 'rejected' ? '#E74C3C' : '#F39C12'),
+                                        backgroundColor: '#2ECC71',
                                         color: '#fff',
                                         paddingHorizontal: 10
                                     }}
                                 >
-                                    {String(verificationStatus).toUpperCase()}
+                                    VERIFIED
                                 </Badge>
                             </View>
-                            {verificationStatus === 'pending' && (
-                                <Text style={{ fontSize: 11, color: theme.colors.secondaryText, fontStyle: 'italic', marginTop: 4 }}>
-                                    Your documents are currently being reviewed by an administrator.
-                                </Text>
-                            )}
                         </View>
                     )}
                     <View style={styles.inputContainer}>
@@ -462,7 +458,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                             <Text style={[styles.label, { color: theme.colors.secondaryText }]}>Country</Text>
                             <Text style={[styles.cityName, { color: theme.colors.text }]}>{country || 'Select country'}</Text>
                         </View>
-                        <IconButton icon="chevron-right" size={24} iconColor={theme.colors.secondaryText} />
+                        <IconButton icon={bi('chevron-right')} size={24} iconColor={theme.colors.secondaryText} />
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -478,7 +474,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                 {city || (country ? 'Select city' : 'Select country first')}
                             </Text>
                         </View>
-                        <IconButton icon="chevron-right" size={24} iconColor={theme.colors.secondaryText} />
+                        <IconButton icon={bi('chevron-right')} size={24} iconColor={theme.colors.secondaryText} />
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -496,7 +492,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                 <Text style={{ color: theme.colors.secondaryText, marginTop: 4 }}>Detecting location...</Text>
                             ) : null}
                         </View>
-                        <IconButton icon="map-marker-radius" size={24} iconColor={theme.colors.secondaryText} />
+                        <IconButton icon={bi('map-marker-radius')} size={24} iconColor={theme.colors.secondaryText} />
                     </TouchableOpacity>
 
                     <Divider style={{ marginVertical: 10, backgroundColor: theme.colors.outline }} />
@@ -505,7 +501,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
 
                     <View style={styles.preferenceItem}>
                         <View style={styles.preferenceLabel}>
-                            <IconButton icon="weather-night" size={20} iconColor={theme.colors.primary} />
+                            <IconButton icon={bi('weather-night')} size={20} iconColor={theme.colors.primary} />
                             <Text style={[styles.preferenceText, { color: theme.colors.text }]}>Dark Mode</Text>
                         </View>
                         <Switch

@@ -76,6 +76,13 @@ export class DriverController {
                     pickup: { address: order.pickupAddress, coords: latLngFromPoint(order.pickupLocation) },
                     dropoff: { address: order.dropoffAddress, coords: latLngFromPoint(order.dropoffLocation) },
                     priceCents: order.finalPriceCents ?? order.suggestedPriceCents,
+                    distanceKm: order.distanceKm,
+                    etaMinutes: order.etaMinutes,
+                    customerName: order.user?.name,
+                    customerPhone: order.user?.phone,
+                    customerId: order.user?.id,
+                    notes: (order as any).notes,
+                    itemDescription: (order as any).itemDescription,
                 },
             },
         };

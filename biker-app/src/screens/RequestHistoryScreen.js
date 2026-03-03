@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { Text, IconButton, Surface, useTheme, Avatar, Divider } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 const RequestHistoryScreen = ({ navigation }) => {
     const theme = useTheme();
@@ -104,7 +105,7 @@ const RequestHistoryScreen = ({ navigation }) => {
                     <View style={styles.bikerInfo}>
                         <Avatar.Icon
                             size={24}
-                            icon={SheetService.currentUser?.role === 'biker' ? "account" : "motorbike"}
+                            icon={bi(SheetService.currentUser?.role === 'biker' ? 'account' : 'motorbike')}
                             backgroundColor={theme.colors.surfaceVariant}
                             color={theme.colors.text}
                         />
@@ -121,7 +122,7 @@ const RequestHistoryScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
-                <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
+                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Request History</Text>
                 <View style={{ width: 48 }} />
             </View>

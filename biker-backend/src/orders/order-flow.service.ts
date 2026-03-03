@@ -225,6 +225,7 @@ export class OrderFlowService {
                 driver: {
                     id: biker.id,
                     name: biker.user?.name,
+                    phone: biker.user?.phone,
                     vehicleType: biker.vehicleType,
                 },
             });

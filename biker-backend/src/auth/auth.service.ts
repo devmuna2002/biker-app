@@ -152,7 +152,7 @@ export class AuthService implements OnModuleInit {
         const saved = await this.usersRepo.save(user);
 
         if (saved.role === UserRole.DRIVER) {
-            const trialDays = 30;
+            const trialDays = 7;
             const trialExpiryAt = new Date();
             trialExpiryAt.setDate(trialExpiryAt.getDate() + trialDays);
 
@@ -163,8 +163,9 @@ export class AuthService implements OnModuleInit {
                 vehicleType: DriverVehicleType.BIKE, // Force BIKE as requested
                 isOnline: false,
                 isAvailable: false,
-                verificationStatus: 'pending',
+                verificationStatus: 'approved',
                 trialExpiryDate: trialExpiryAt,
+                subscriptionStatus: 'inactive',
             } as any);
             await this.bikersRepo.save(biker);
         }

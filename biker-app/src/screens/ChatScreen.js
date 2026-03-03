@@ -20,6 +20,7 @@ import CallService from '../api/CallService';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { bi } from '../components/AppIcon';
 
 const ChatScreen = ({ route, navigation }) => {
   const theme = useTheme();
@@ -64,12 +65,17 @@ const ChatScreen = ({ route, navigation }) => {
     const init = async () => {
       try {
         const socket = await SheetService.connectTrackingSocket();
-        if (!active) return;
+        if (!active || !socket) return;
         socketRef.current = socket;
         setConnectionStatus(socket.connected ? 'connected' : 'disconnected');
 
         socket.on('connect', () => { if (active) setConnectionStatus('connected'); });
         socket.on('disconnect', () => { if (active) setConnectionStatus('disconnected'); });
+
+        // Register user identity so backend knows who we are
+        if (myId) {
+          socket.emit('register', { userId: myId, userType: 'chat' });
+        }
 
         // Subscribe to the chat room
         const room = orderId ? `chat_${orderId}` : `chat_support_${myId}`;
@@ -77,17 +83,19 @@ const ChatScreen = ({ route, navigation }) => {
 
         socket.on('new_message', (msg) => {
           if (!active) return;
-          if (msg?.room !== room && msg?.orderId !== orderId) return;
+          // Accept messages for our room
           const normalized = {
             id: msg.id || `m-${Date.now()}-${Math.random()}`,
-            text: msg.text || msg.message,
+            text: msg.text || msg.message || undefined,
+            image: msg.image || undefined,
+            audio: msg.audio || undefined,
+            type: msg.type || (msg.image ? 'image' : msg.audio ? 'audio' : undefined),
             senderId: msg.senderId?.toString(),
             senderName: msg.senderName || recipientName,
             timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
             delivered: true,
           };
           setMessages(prev => {
-            // Avoid duplicate
             if (prev.find(m => m.id === normalized.id)) return prev;
             return [...prev, normalized];
           });
@@ -100,19 +108,22 @@ const ChatScreen = ({ route, navigation }) => {
           typingTimeout.current = setTimeout(() => setIsTyping(false), 2500);
         });
 
-        // Load message history
+        // Load message history from REST API
         try {
           const historyRes = await SheetService.getChatHistory({ orderId, room });
           if (!active) return;
           const history = (historyRes?.data?.messages || []).map(m => ({
             id: m.id?.toString(),
-            text: m.text || m.message,
+            text: m.text || m.message || undefined,
+            image: m.image || undefined,
+            audio: m.audio || undefined,
+            type: m.type || undefined,
             senderId: m.senderId?.toString(),
             senderName: m.senderName,
             timestamp: new Date(m.timestamp || m.createdAt),
             delivered: true,
           }));
-          setMessages(history);
+          if (history.length > 0) setMessages(history);
         } catch {
           // No history yet
         }
@@ -131,7 +142,8 @@ const ChatScreen = ({ route, navigation }) => {
           isSystem: true,
         }] : prev);
 
-      } catch {
+      } catch (e) {
+        console.log('[ChatScreen] Socket init error:', e?.message);
         if (active) setConnectionStatus('error');
       }
     };
@@ -373,95 +385,33 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   const handleCall = async () => {
-    const userId = SheetService.currentUser?.id;
+    const phone = recipientPhone || route?.params?.customerPhone;
+    if (phone) {
+      Alert.alert(
+        'Call',
+        `Call ${recipientName} at ${phone}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Call 📞',
+            onPress: () => {
+              SheetService.recordCall({
+                orderId,
+                phoneNumber: phone,
+                name: recipientName,
+                type: 'outgoing',
+              }).catch(() => { });
 
-    // Check if WebRTC is supported
-    const isWebRTCSupported = CallService.checkSupport ? CallService.checkSupport() : false;
-
-    if (!isWebRTCSupported) {
-      // Fallback to phone call
-      const phone = recipientPhone || route?.params?.customerPhone;
-      if (phone) {
-        Alert.alert(
-          'Call',
-          `Call ${recipientName} at ${phone}?`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Call 📞',
-              onPress: () => {
-                // Record the call attempt
-                SheetService.recordCall({
-                  userId: userId || 'anonymous',
-                  recipientId: recipientId || 'unknown',
-                  name: recipientName,
-                  phoneNumber: phone,
-                  type: 'outgoing',
-                  startTime: new Date()
-                });
-
-                Linking.openURL(`tel:${phone}`).catch(() => {
-                  Alert.alert('Error', 'Could not make call');
-                });
-              }
-            },
-          ]
-        );
-      } else {
-        Alert.alert('Call', `Phone number not available. In-app calling requires a development build.`);
-      }
-      return;
+              Linking.openURL(`tel:${phone}`).catch(() => {
+                Alert.alert('Error', 'Could not make call');
+              });
+            }
+          },
+        ]
+      );
+    } else {
+      Alert.alert('No Phone Number', `${recipientName}'s phone number is not available for this order.`);
     }
-
-    if (!userId) {
-      Alert.alert('Error', 'Please log in to make calls');
-      return;
-    }
-
-    Alert.alert(
-      'Voice Call',
-      `Start a voice call with ${recipientName}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Call 📞',
-          onPress: async () => {
-            setIsCalling(true);
-            setCallState('calling');
-
-            // Record call record
-            SheetService.recordCall({
-              userId,
-              recipientId: recipientId || recipientName.replace(/\s+/g, '_').toLowerCase(),
-              name: recipientName,
-              type: 'outgoing',
-              startTime: new Date(),
-              isWebRTC: true
-            });
-
-            // Initialize call service
-            CallService.init(userId);
-
-            // Set up callbacks
-            CallService.onCallStateChange = (state) => {
-              setCallState(state);
-              if (state === 'ended' || state === 'busy') {
-                setIsCalling(false);
-              }
-            };
-
-            CallService.onRemoteStream = (stream) => {
-              // Remote stream received
-              console.log('Got remote stream');
-            };
-
-            // Initiate call - use recipientId or generate one based on name
-            const targetId = recipientId || recipientName.replace(/\s+/g, '_').toLowerCase();
-            await CallService.initiateCall(targetId, userId);
-          }
-        },
-      ]
-    );
   };
 
   const handleEndCall = () => {
@@ -535,7 +485,7 @@ const ChatScreen = ({ route, navigation }) => {
                   }
                 }}
               >
-                <IconButton icon="play" size={20} iconColor={mine ? "#000" : "#2ECC71"} style={{ margin: 0 }} />
+                <IconButton icon={bi('play')} size={20} iconColor={mine ? "#000" : "#2ECC71"} style={{ margin: 0 }} />
               </TouchableOpacity>
               <Text style={[styles.audioDuration, { color: mine ? '#000' : '#FFF' }]}>Audio</Text>
             </View>
@@ -574,7 +524,7 @@ const ChatScreen = ({ route, navigation }) => {
         {/* Header */}
         <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
           <IconButton
-            icon="arrow-left"
+            icon={bi('arrow-left')}
             size={24}
             onPress={() => {
               if (navigation.canGoBack()) {
@@ -604,7 +554,7 @@ const ChatScreen = ({ route, navigation }) => {
             </View>
           </View>
           <TouchableOpacity style={styles.callBtn} onPress={handleCall}>
-            <IconButton icon="phone" size={24} iconColor="#2ECC71" style={{ margin: 0 }} />
+            <IconButton icon={bi('phone')} size={24} iconColor="#2ECC71" style={{ margin: 0 }} />
           </TouchableOpacity>
         </View>
 
@@ -633,8 +583,8 @@ const ChatScreen = ({ route, navigation }) => {
 
         {/* Input Bar */}
         <View style={[styles.inputBar, { backgroundColor: theme.colors.surface }]}>
-          <TouchableOpacity style={styles.attachBtn}>
-            <IconButton icon="image-plus" size={22} iconColor="#7F8C8D" style={{ margin: 0 }} />
+          <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
+            <IconButton icon={bi('image-plus')} size={22} iconColor="#7F8C8D" style={{ margin: 0 }} />
           </TouchableOpacity>
           <TextInput
             style={[styles.textInput, { color: theme.colors.text, borderColor: theme.colors.outline }]}
@@ -653,7 +603,7 @@ const ChatScreen = ({ route, navigation }) => {
               style={styles.mediaBtn}
               onPress={() => setShowMediaOptions(!showMediaOptions)}
             >
-              <IconButton icon="plus-circle" size={24} iconColor="#2ECC71" style={{ margin: 0 }} />
+              <IconButton icon={bi('plus-circle')} size={24} iconColor="#2ECC71" style={{ margin: 0 }} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -661,7 +611,7 @@ const ChatScreen = ({ route, navigation }) => {
               onPress={sendMessage}
               disabled={!inputText.trim()}
             >
-              <IconButton icon="send" size={20} iconColor={inputText.trim() ? '#000' : '#555'} style={{ margin: 0 }} />
+              <IconButton icon={bi('send')} size={20} iconColor={inputText.trim() ? '#000' : '#555'} style={{ margin: 0 }} />
             </TouchableOpacity>
           </View>
         </View>
@@ -670,12 +620,12 @@ const ChatScreen = ({ route, navigation }) => {
         {showMediaOptions && (
           <View style={styles.mediaOptionsPopup}>
             <TouchableOpacity style={styles.mediaOption} onPress={takePhoto}>
-              <IconButton icon="camera" size={28} iconColor="#FFF" style={{ margin: 0, backgroundColor: '#2ECC71', borderRadius: 20 }} />
+              <IconButton icon={bi('camera')} size={28} iconColor="#FFF" style={{ margin: 0, backgroundColor: '#2ECC71', borderRadius: 20 }} />
               <Text style={styles.mediaOptionText}>Camera</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.mediaOption} onPress={pickImage}>
-              <IconButton icon="image" size={28} iconColor="#FFF" style={{ margin: 0, backgroundColor: '#3498DB', borderRadius: 20 }} />
+              <IconButton icon={bi('image')} size={28} iconColor="#FFF" style={{ margin: 0, backgroundColor: '#3498DB', borderRadius: 20 }} />
               <Text style={styles.mediaOptionText}>Gallery</Text>
             </TouchableOpacity>
 
@@ -684,7 +634,7 @@ const ChatScreen = ({ route, navigation }) => {
               onPress={isRecording ? stopRecording : startRecording}
             >
               <IconButton
-                icon={isRecording ? "stop-circle" : "microphone"}
+                icon={bi(isRecording ? 'stop-circle' : 'microphone')}
                 size={28}
                 iconColor="#FFF"
                 style={{ margin: 0, backgroundColor: isRecording ? '#E74C3C' : '#9B59B6', borderRadius: 20 }}
@@ -699,7 +649,7 @@ const ChatScreen = ({ route, navigation }) => {
       {isCalling && (
         <View style={styles.callOverlay}>
           <View style={styles.callCard}>
-            <Avatar.Icon size={80} icon="phone" style={{ backgroundColor: '#2ECC71' }} />
+            <Avatar.Icon size={80} icon={bi('phone')} style={{ backgroundColor: '#2ECC71' }} />
             <Text style={styles.callName}>{recipientName}</Text>
             <Text style={styles.callStatus}>
               {callState === 'calling' ? 'Calling...' :
@@ -708,7 +658,7 @@ const ChatScreen = ({ route, navigation }) => {
             </Text>
             <View style={styles.callActions}>
               <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall}>
-                <IconButton icon="phone-hangup" size={32} iconColor="#FFF" style={{ margin: 0 }} />
+                <IconButton icon={bi('phone-hangup')} size={32} iconColor="#FFF" style={{ margin: 0 }} />
               </TouchableOpacity>
             </View>
           </View>

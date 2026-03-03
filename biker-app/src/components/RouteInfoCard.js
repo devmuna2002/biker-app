@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
 import { Text, IconButton, Button } from 'react-native-paper';
 import { BlurView } from 'expo-blur';
+import { bi } from './AppIcon';
 
 const { width } = Dimensions.get('window');
 
@@ -13,7 +14,7 @@ const RouteInfoCard = ({ nextStop, destination, onCancel }) => {
                 <View style={styles.cardHeader}>
                     <View style={styles.stopInfo}>
                         <View style={styles.iconContainer}>
-                            <IconButton icon="flash" size={20} iconColor="#F1C40F" />
+                            <IconButton icon={bi('flash')} size={20} iconColor="#F1C40F" />
                         </View>
                         <View>
                             <Text style={styles.stopLabel}>Next Charge</Text>
@@ -22,14 +23,14 @@ const RouteInfoCard = ({ nextStop, destination, onCancel }) => {
                             </Text>
                         </View>
                     </View>
-                    <IconButton icon="chevron-up" size={24} iconColor="#FFF" />
+                    <IconButton icon={bi('chevron-up')} size={24} iconColor="#FFF" />
                 </View>
 
                 {/* Destination */}
                 <View style={styles.cardBody}>
                     <View style={styles.stopInfo}>
                         <View style={[styles.iconContainer, { backgroundColor: '#E74C3C' }]}>
-                            <IconButton icon="map-marker" size={20} iconColor="#FFF" />
+                            <IconButton icon={bi('map-marker')} size={20} iconColor="#FFF" />
                         </View>
                         <View>
                             <Text style={styles.stopLabel}>Destination</Text>

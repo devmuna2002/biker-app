@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { useNavigation, useRoute, DrawerActions, useFocusEffect } from '@react-navigation/native';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 import mapStyle from '../theme/mapStyle.json';
 
 const { width, height } = Dimensions.get('window');
@@ -630,10 +631,18 @@ const HomeScreen = () => {
                 if (data?.orderId !== orderId) return;
                 setActiveOrder(prev => prev ? { ...prev, status: data.status } : prev);
                 if (data.status === 'completed') {
-                    Alert.alert('Trip Completed', 'Your trip has been completed. Thank you!');
+                    const completedBiker = data.biker || {};
+                    const completedOrderId = data.orderId;
                     setActiveOrder(null);
                     setSelectedRoute(null);
                     setIsTracking(false);
+                    // Force navigate to mandatory rating
+                    navigation.navigate('Rating', {
+                        bikerId: completedBiker.id,
+                        bikerName: completedBiker.name || 'Your Biker',
+                        bikerPhoto: completedBiker.photo || null,
+                        orderId: completedOrderId,
+                    });
                 }
             });
 
@@ -1259,7 +1268,7 @@ const HomeScreen = () => {
                             {/* Marker Icon */}
                             <Surface style={{ padding: 6, backgroundColor: 'rgba(26,26,26,0.9)', borderRadius: 25, borderWidth: 1, borderColor: '#333' }} elevation={2}>
                                 <IconButton
-                                    icon={p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife'}
+                                    icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
                                     size={16}
                                     iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
                                     style={{ margin: 0 }}
@@ -1324,7 +1333,7 @@ const HomeScreen = () => {
                         >
                             <View style={styles.pickupMarker}>
                                 <View style={styles.pickupMarkerInner}>
-                                    <Avatar.Icon size={24} icon="map-marker" backgroundColor="#00d4ff" color="#000" />
+                                    <Avatar.Icon size={24} icon={bi('map-marker')} backgroundColor="#00d4ff" color="#000" />
                                 </View>
                                 <View style={styles.pickupMarkerPulse} />
                             </View>
@@ -1340,7 +1349,7 @@ const HomeScreen = () => {
                         >
                             <View style={styles.dropoffMarker}>
                                 <View style={styles.dropoffMarkerInner}>
-                                    <Avatar.Icon size={24} icon="flag" backgroundColor="#ff6b6b" color="#fff" />
+                                    <Avatar.Icon size={24} icon={bi('flag')} backgroundColor="#ff6b6b" color="#fff" />
                                 </View>
                                 <View style={styles.dropoffMarkerPulse} />
                             </View>
@@ -1349,7 +1358,7 @@ const HomeScreen = () => {
 
                     {bikerPos && (
                         <Marker coordinate={bikerPos} title="Your Biker">
-                            <Avatar.Icon size={40} icon="motorbike" backgroundColor="#000" color="#A8E05F" />
+                            <Avatar.Icon size={40} icon={bi('motorbike')} backgroundColor="#000" color="#A8E05F" />
                         </Marker>
                     )}
 
@@ -1368,7 +1377,7 @@ const HomeScreen = () => {
                             }}
                         >
                             <View style={[styles.bikerMarker, selectedBiker?.id === driver.id && styles.bikerMarkerSelected]}>
-                                <Avatar.Icon size={30} icon="motorbike" backgroundColor={selectedBiker?.id === driver.id ? "#00FD3F" : "#A8E05F"} color="#000" />
+                                <Avatar.Icon size={30} icon={bi('motorbike')} backgroundColor={selectedBiker?.id === driver.id ? "#00FD3F" : "#A8E05F"} color="#000" />
                             </View>
                         </Marker>
                     ))}
@@ -1384,7 +1393,7 @@ const HomeScreen = () => {
                             <View style={[styles.providerMarker, selectedProvider?.id === p.id && styles.providerMarkerActive]}>
                                 <Avatar.Icon
                                     size={28}
-                                    icon={foodKind === 'pharmacy' ? 'medical-bag' : foodKind === 'grocery' ? 'cart' : foodKind === 'boutique' ? 'tshirt-crew' : foodKind === 'bar' ? 'glass-cocktail' : foodKind === 'school' ? 'school' : foodKind === 'church' ? 'church' : foodKind === 'salon' ? 'content-cut' : 'silverware-fork-knife'}
+                                    icon={bi(foodKind === 'pharmacy' ? 'medical-bag' : foodKind === 'grocery' ? 'cart' : foodKind === 'boutique' ? 'tshirt-crew' : foodKind === 'bar' ? 'glass-cocktail' : foodKind === 'school' ? 'school' : foodKind === 'church' ? 'church' : foodKind === 'salon' ? 'content-cut' : 'silverware-fork-knife')}
                                     backgroundColor={selectedProvider?.id === p.id ? '#00FD3F' : '#111'}
                                     color={selectedProvider?.id === p.id ? '#000' : '#A8E05F'}
                                 />
@@ -1399,7 +1408,7 @@ const HomeScreen = () => {
                     style={styles.menuButton}
                     onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
                 >
-                    <IconButton icon="menu" size={28} iconColor="#FFFFFF" />
+                    <IconButton icon={bi('menu')} size={28} iconColor="#FFFFFF" />
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={styles.profileButton}
@@ -1408,7 +1417,7 @@ const HomeScreen = () => {
                     {user?.photo ? (
                         <Avatar.Image size={40} source={{ uri: user.photo }} />
                     ) : (
-                        <Avatar.Icon size={40} icon="account" backgroundColor="#F4F6F7" color="#BDC3C7" />
+                        <Avatar.Icon size={40} icon={bi('account')} backgroundColor="#F4F6F7" color="#BDC3C7" />
                     )}
                 </TouchableOpacity>
             </View>
@@ -1421,7 +1430,7 @@ const HomeScreen = () => {
                 ]}>
                     <View style={styles.searchBarRow}>
                         <IconButton
-                            icon="magnify"
+                            icon={bi('magnify')}
                             size={22}
                             iconColor={searchFocused ? '#00FD3F' : '#BDC3C7'}
                             style={{ margin: 0, marginLeft: 4 }}
@@ -1443,7 +1452,7 @@ const HomeScreen = () => {
                         )}
                         {searchQuery.length > 0 && !searchLoading && (
                             <TouchableOpacity onPress={clearSearch} style={{ paddingRight: 8 }}>
-                                <IconButton icon="close-circle" size={18} iconColor="#7F8C8D" style={{ margin: 0 }} />
+                                <IconButton icon={bi('close-circle')} size={18} iconColor="#7F8C8D" style={{ margin: 0 }} />
                             </TouchableOpacity>
                         )}
                     </View>
@@ -1464,7 +1473,7 @@ const HomeScreen = () => {
                                     >
                                         <View style={styles.suggestionIcon}>
                                             <IconButton
-                                                icon={index === 0 ? 'map-marker' : 'map-marker-outline'}
+                                                icon={bi(index === 0 ? 'map-marker' : 'map-marker-outline')}
                                                 size={18}
                                                 iconColor={index === 0 ? '#00FD3F' : '#7F8C8D'}
                                                 style={{ margin: 0 }}
@@ -1478,7 +1487,7 @@ const HomeScreen = () => {
                                                 {item.label.split(',').slice(1).join(',').trim()}
                                             </Text>
                                         </View>
-                                        <IconButton icon="arrow-top-left" size={14} iconColor="#555" style={{ margin: 0 }} />
+                                        <IconButton icon={bi('arrow-top-left')} size={14} iconColor="#555" style={{ margin: 0 }} />
                                     </TouchableOpacity>
                                 )}
                             />
@@ -1491,7 +1500,7 @@ const HomeScreen = () => {
 
             {/* Zoom/Center Button */}
             <TouchableOpacity style={styles.centerButton} onPress={handleCenterMap}>
-                <IconButton icon="navigation-variant" size={24} iconColor="#FFFFFF" />
+                <IconButton icon={bi('navigation-variant')} size={24} iconColor="#FFFFFF" />
             </TouchableOpacity>
 
             {/* Select Location Button */}
@@ -1503,13 +1512,13 @@ const HomeScreen = () => {
                     fromLabel: pickupPoint?.label || pickupAddress || 'Current Location'
                 })}
             >
-                <IconButton icon="map-marker-plus" size={22} iconColor="#FFFFFF" />
+                <IconButton icon={bi('map-marker-plus')} size={22} iconColor="#FFFFFF" />
             </TouchableOpacity>
 
             {/* Fit to Route Button - appears when route is selected */}
             {selectedRoute && (
                 <TouchableOpacity style={styles.fitRouteButton} onPress={handleFitToRoute}>
-                    <IconButton icon="arrow-expand-all" size={22} iconColor="#FFFFFF" />
+                    <IconButton icon={bi('arrow-expand-all')} size={22} iconColor="#FFFFFF" />
                     <Text style={styles.fitRouteText}>Fit Route</Text>
                 </TouchableOpacity>
             )}
@@ -1544,12 +1553,13 @@ const HomeScreen = () => {
                                             style={[styles.commBtn, { backgroundColor: '#3498DB', marginBottom: 8 }]}
                                             onPress={() => navigation.navigate('Chat', {
                                                 orderId: activeOrder.id,
-                                                customerId: SheetService.currentUser?.id,
-                                                bikerId: activeOrder.biker?.id,
-                                                otherPartyName: activeOrder.biker?.name || 'Driver'
+                                                recipientName: activeOrder.biker?.name || 'Driver',
+                                                recipientRole: 'driver',
+                                                recipientPhone: activeOrder.biker?.phone,
+                                                recipientId: activeOrder.biker?.id,
                                             })}
                                         >
-                                            <IconButton icon="chat" size={24} iconColor="#FFF" style={{ margin: 0 }} />
+                                            <IconButton icon={bi('chat')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
                                             <Text style={styles.commBtnText}>Chat</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
@@ -1567,7 +1577,7 @@ const HomeScreen = () => {
                                                 ]);
                                             }}
                                         >
-                                            <IconButton icon="close" size={24} iconColor="#FFF" style={{ margin: 0 }} />
+                                            <IconButton icon={bi('close')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
                                             <Text style={styles.commBtnText}>Cancel</Text>
                                         </TouchableOpacity>
                                     </View>
@@ -1621,7 +1631,7 @@ const HomeScreen = () => {
                                         >
                                             <View style={styles.serviceIconContainer}>
                                                 <IconButton
-                                                    icon={service.icon}
+                                                    icon={bi(service.icon)}
                                                     size={30}
                                                     iconColor={activeService === service.id ? '#00FD3F' : '#FFFFFF'}
                                                 />
@@ -1647,7 +1657,7 @@ const HomeScreen = () => {
                                                     <View style={styles.foodMenuRow}>
                                                         <Text style={styles.foodMenuValue}>{foodKindLabel(foodKind)}</Text>
                                                         <IconButton
-                                                            icon={foodMenuVisible ? "chevron-up" : "chevron-down"}
+                                                            icon={bi(foodMenuVisible ? 'chevron-up' : 'chevron-down')}
                                                             size={18}
                                                             iconColor="#BDC3C7"
                                                             style={{ margin: 0 }}
@@ -1728,7 +1738,7 @@ const HomeScreen = () => {
                                                     ) : null}
                                                 </View>
                                                 <IconButton
-                                                    icon="close"
+                                                    icon={bi('close')}
                                                     size={18}
                                                     iconColor="#BDC3C7"
                                                     onPress={() => {
@@ -1756,7 +1766,7 @@ const HomeScreen = () => {
                                                         {providers.slice(0, 8).map((p) => (
                                                             <TouchableOpacity key={String(p.id)} style={styles.providerItem} onPress={() => selectProvider(p)}>
                                                                 <IconButton
-                                                                    icon={foodKind === 'pharmacy' ? 'medical-bag' : foodKind === 'grocery' ? 'cart' : foodKind === 'boutique' ? 'tshirt-crew' : foodKind === 'bar' ? 'glass-cocktail' : foodKind === 'school' ? 'school' : foodKind === 'church' ? 'church' : foodKind === 'salon' ? 'content-cut' : 'silverware-fork-knife'}
+                                                                    icon={bi(foodKind === 'pharmacy' ? 'medical-bag' : foodKind === 'grocery' ? 'cart' : foodKind === 'boutique' ? 'tshirt-crew' : foodKind === 'bar' ? 'glass-cocktail' : foodKind === 'school' ? 'school' : foodKind === 'church' ? 'church' : foodKind === 'salon' ? 'content-cut' : 'silverware-fork-knife')}
                                                                     size={18}
                                                                     iconColor="#A8E05F"
                                                                     style={{ margin: 0 }}
@@ -1917,7 +1927,7 @@ const HomeScreen = () => {
                                                         >
                                                             <Avatar.Icon
                                                                 size={40}
-                                                                icon="motorbike"
+                                                                icon={bi('motorbike')}
                                                                 color={selectedBiker?.id === biker.id ? "#000" : "#00C853"}
                                                                 style={{ backgroundColor: selectedBiker?.id === biker.id ? "#00C853" : "rgba(0,200,83,0.2)" }}
                                                             />
@@ -1941,12 +1951,12 @@ const HomeScreen = () => {
                                             </View>
                                         ) : searchError ? (
                                             <View style={styles.bikerSearchRow}>
-                                                <IconButton icon="alert-circle" size={20} iconColor="#E74C3C" style={{ margin: 0 }} />
+                                                <IconButton icon={bi('alert-circle')} size={20} iconColor="#E74C3C" style={{ margin: 0 }} />
                                                 <Text style={[styles.bikerSearchText, { color: '#E74C3C' }]}>{searchError}</Text>
                                             </View>
                                         ) : bikersFound.length > 0 ? (
                                             <View style={styles.bikerSearchRow}>
-                                                <IconButton icon="check-circle" size={20} iconColor="#2ECC71" style={{ margin: 0 }} />
+                                                <IconButton icon={bi('check-circle')} size={20} iconColor="#2ECC71" style={{ margin: 0 }} />
                                                 <Text style={[styles.bikerSearchText, { color: '#2ECC71' }]}>
                                                     {bikersFound.length} biker{bikersFound.length > 1 ? 's' : ''} found nearby
                                                 </Text>
@@ -1965,7 +1975,7 @@ const HomeScreen = () => {
                                                 style={styles.recentItem}
                                                 onPress={() => selectRecentDestination(place)}
                                             >
-                                                <IconButton icon="history" size={24} iconColor="#BDC3C7" style={styles.historyIcon} />
+                                                <IconButton icon={bi('history')} size={24} iconColor="#BDC3C7" style={styles.historyIcon} />
                                                 <View style={styles.placeTextContainer}>
                                                     <Text style={styles.placeName}>{place.name}</Text>
                                                     <Text style={styles.placeCity}>{place.city}</Text>
@@ -1993,7 +2003,7 @@ const HomeScreen = () => {
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                     >
-                        <IconButton icon="star" iconColor="#000" size={30} />
+                        <IconButton icon={bi('star')} iconColor="#000" size={30} />
                         <Text style={styles.modalTitle}>Welcome to Biker!</Text>
                     </LinearGradient>
 
@@ -2001,7 +2011,7 @@ const HomeScreen = () => {
                         <Text style={styles.welcomeSubtitle}>Quick Guide for Users</Text>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="map-marker-radius" iconColor={theme.colors.primary} size={24} />
+                            <IconButton icon={bi('map-marker-radius')} iconColor={theme.colors.primary} size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>Book a Ride</Text>
                                 <Text style={styles.tipDesc}>Enter destination or tap anywhere on the map to pin a drop-off point instantly.</Text>
@@ -2009,7 +2019,7 @@ const HomeScreen = () => {
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="package-variant" iconColor={theme.colors.primary} size={24} />
+                            <IconButton icon={bi('package-variant')} iconColor={theme.colors.primary} size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>Send a Package & Local Services</Text>
                                 <Text style={styles.tipDesc}>Switch to 'Send a Package' to deliver parcels, or use 'Local Services' to browse nearby shops, food, pharmacies, and more.</Text>
@@ -2017,7 +2027,7 @@ const HomeScreen = () => {
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="phone-in-talk" iconColor={theme.colors.primary} size={24} />
+                            <IconButton icon={bi('phone-in-talk')} iconColor={theme.colors.primary} size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>In-App Calling</Text>
                                 <Text style={styles.tipDesc}>Once a biker accepts your job, call them directly for free through our secure system.</Text>
@@ -2025,7 +2035,7 @@ const HomeScreen = () => {
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="shield-check" iconColor={theme.colors.primary} size={24} />
+                            <IconButton icon={bi('shield-check')} iconColor={theme.colors.primary} size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>Security First</Text>
                                 <Text style={styles.tipDesc}>Your account history is private. You can wipe all your data at any time in Profile Settings.</Text>

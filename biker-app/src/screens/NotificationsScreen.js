@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { Text, IconButton, Surface, useTheme, Avatar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 const NotificationsScreen = ({ navigation }) => {
     const theme = useTheme();
@@ -66,7 +67,7 @@ const NotificationsScreen = ({ navigation }) => {
                 <View style={styles.row}>
                     <Avatar.Icon
                         size={40}
-                        icon={getIcon(item.type)}
+                        icon={bi(getIcon(item.type))}
                         backgroundColor="transparent"
                         color={getColor(item.type)}
                         style={{ margin: 0 }}
@@ -87,9 +88,9 @@ const NotificationsScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
-                <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
+                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Notifications</Text>
-                <IconButton icon="dots-vertical" size={24} iconColor={theme.colors.text} />
+                <IconButton icon={bi('dots-vertical')} size={24} iconColor={theme.colors.text} />
             </View>
 
             <FlatList

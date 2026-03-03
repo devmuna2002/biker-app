@@ -5,6 +5,7 @@ import { Text, Button, useTheme, Surface, IconButton, Avatar, Divider, ActivityI
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 // fallback price map in cents (used if server call fails)
 const FALLBACK_PLANS = [
@@ -13,9 +14,9 @@ const FALLBACK_PLANS = [
 ];
 
 const PLAN_ICONS = {
-  weekly: 'calendar-week',
-  monthly: 'calendar-month',
-  trial: 'cake-variant',
+  weekly: bi('calendar-week'),
+  monthly: bi('calendar-month'),
+  trial: bi('cake-variant'),
 };
 
 const PLAN_FEATURES = {
@@ -25,8 +26,8 @@ const PLAN_FEATURES = {
 };
 
 const PAYMENT_METHODS = [
-  { id: 'stripe', label: 'Card (Visa/MC)', icon: 'credit-card', color: '#635BFF' },
-  { id: 'paypal', label: 'PayPal', icon: 'alpha-p-circle', color: '#003087' },
+  { id: 'stripe', label: 'Card (Visa/MC)', icon: bi('credit-card'), color: '#635BFF' },
+  { id: 'paypal', label: 'PayPal', icon: bi('alpha-p-circle'), color: '#003087' },
 ];
 
 const SubscriptionScreen = ({ navigation }) => {
@@ -346,7 +347,7 @@ const SubscriptionScreen = ({ navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <IconButton
-          icon="arrow-left"
+          icon={bi('arrow-left')}
           size={28}
           onPress={() => navigation.goBack()}
           iconColor={theme.colors.text}
@@ -372,7 +373,7 @@ const SubscriptionScreen = ({ navigation }) => {
             <View style={styles.currentSubRow}>
               <Avatar.Icon
                 size={44}
-                icon={currentSub.subscriptionStatus === 'active' ? 'shield-check' : 'shield-alert'}
+                icon={bi(currentSub.subscriptionStatus === 'active' ? 'shield-check' : 'shield-alert')}
                 backgroundColor={
                   currentSub.subscriptionStatus === 'active'
                     ? theme.colors.secondary + '20'
@@ -447,7 +448,7 @@ const SubscriptionScreen = ({ navigation }) => {
           const isSelected = selectedPlan === p.subscriptionType;
           const isActive = currentSub?.subscriptionStatus === 'active' && currentSub.subscriptionType === p.subscriptionType;
           const features = PLAN_FEATURES[p.subscriptionType] || ['Full access', 'Accept orders'];
-          const icon = PLAN_ICONS[p.subscriptionType] || 'calendar';
+          const icon = PLAN_ICONS[p.subscriptionType] || bi('calendar');
 
           return (
             <TouchableOpacity
@@ -515,7 +516,7 @@ const SubscriptionScreen = ({ navigation }) => {
                     {features.map((f, fi) => (
                       <View key={fi} style={styles.featureRow}>
                         <IconButton
-                          icon="check-circle"
+                          icon={bi('check-circle')}
                           size={16}
                           iconColor={theme.colors.primary}
                           style={{ margin: 0 }}
@@ -568,7 +569,7 @@ const SubscriptionScreen = ({ navigation }) => {
                 )}
               </View>
               {paymentMethod === pm.id && (
-                <IconButton icon="check-circle" size={18} iconColor={pm.color} style={{ margin: 0 }} />
+                <IconButton icon={bi('check-circle')} size={18} iconColor={pm.color} style={{ margin: 0 }} />
               )}
             </TouchableOpacity>
           ))}
@@ -576,7 +577,7 @@ const SubscriptionScreen = ({ navigation }) => {
 
         {/* Security note */}
         <View style={styles.securityNote}>
-          <IconButton icon="lock" size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
+          <IconButton icon={bi('lock')} size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
           <Text style={{ color: '#7F8C8D', fontSize: 11, flex: 1 }}>
             Payments are encrypted and processed securely. Your card details are never stored on our servers.
           </Text>

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Text, IconButton, Surface, useTheme, Button } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { bi } from '../components/AppIcon';
 
 const CouriersScreen = ({ navigation }) => {
     const theme = useTheme();
@@ -9,7 +10,7 @@ const CouriersScreen = ({ navigation }) => {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
             <View style={styles.header}>
-                <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
+                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Couriers</Text>
                 <View style={{ width: 48 }} />
             </View>

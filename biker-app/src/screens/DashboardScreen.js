@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert } f
 import { Text, IconButton, Surface, useTheme, Avatar, Divider, ActivityIndicator } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ const StatCard = ({ icon, label, value, accentColor, theme }) => (
         <View style={[styles.statIconWrap, { backgroundColor: accentColor + '20' }]}>
             <Avatar.Icon
                 size={40}
-                icon={icon}
+                icon={bi(icon)}
                 backgroundColor="transparent"
                 color={accentColor}
                 style={{ margin: 0 }}
@@ -50,7 +51,7 @@ const OrderRow = ({ item, theme }) => {
             <View style={styles.listCardRow}>
                 <Avatar.Icon
                     size={36}
-                    icon="package-variant-closed"
+                    icon={bi('package-variant-closed')}
                     backgroundColor={theme.colors.primary + '20'}
                     color={theme.colors.primary}
                     style={{ margin: 0 }}
@@ -90,7 +91,7 @@ const CallRow = ({ item, theme }) => {
             <View style={styles.listCardRow}>
                 <Avatar.Icon
                     size={36}
-                    icon={icon}
+                    icon={bi(icon)}
                     backgroundColor={iconColor + '20'}
                     color={iconColor}
                     style={{ margin: 0 }}
@@ -122,7 +123,7 @@ const FeeRow = ({ item, theme }) => {
             <View style={styles.listCardRow}>
                 <Avatar.Icon
                     size={36}
-                    icon="cash-multiple"
+                    icon={bi('cash')}
                     backgroundColor={theme.colors.secondary + '20'}
                     color={theme.colors.secondary}
                     style={{ margin: 0 }}
@@ -276,7 +277,7 @@ const DashboardScreen = ({ navigation }) => {
                                         onPress={() => navigation.navigate('Notifications')}
                                         style={[styles.headerIconBtn, { backgroundColor: theme.colors.surface }]}
                                     >
-                                        <IconButton icon="bell-outline" size={22} iconColor={theme.colors.text} style={{ margin: 0 }} />
+                                        <IconButton icon={bi('bell-outline')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} />
                                     </TouchableOpacity>
                                     <TouchableOpacity
                                         onPress={() => navigation.navigate('ProfileSettings')}
@@ -303,35 +304,35 @@ const DashboardScreen = ({ navigation }) => {
                 return (
                     <View style={styles.statsGrid}>
                         <StatCard
-                            icon="check-circle-outline"
+                            icon={bi('check-circle-outline')}
                             label="Completed"
                             value={completedOrders}
                             accentColor={theme.colors.secondary}
                             theme={theme}
                         />
                         <StatCard
-                            icon="clock-outline"
+                            icon={bi('time')}
                             label="Pending"
                             value={pendingOrders}
                             accentColor={theme.colors.warning}
                             theme={theme}
                         />
                         <StatCard
-                            icon="close-circle-outline"
+                            icon={bi('close-circle')}
                             label="Cancelled"
                             value={cancelledOrders}
                             accentColor={theme.colors.error}
                             theme={theme}
                         />
                         <StatCard
-                            icon="motorbike"
+                            icon={bi('motorbike')}
                             label="Total Trips"
                             value={totalOrders}
                             accentColor={theme.colors.primary}
                             theme={theme}
                         />
                         <StatCard
-                            icon="cash"
+                            icon={bi('cash')}
                             label="Earnings"
                             value={`$${(totalEarnings / 100).toFixed(0)}`}
                             accentColor="#F1C40F"
@@ -362,7 +363,7 @@ const DashboardScreen = ({ navigation }) => {
                     <Surface style={[styles.emptyCard, { backgroundColor: theme.colors.surface }]} elevation={0}>
                         <Avatar.Icon
                             size={40}
-                            icon={item.icon}
+                            icon={bi(item.icon)}
                             backgroundColor={theme.colors.outline + '30'}
                             color={theme.colors.secondaryText}
                             style={{ margin: 0 }}

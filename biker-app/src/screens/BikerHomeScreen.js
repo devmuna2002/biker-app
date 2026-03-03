@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import SheetService from '../api/SheetService';
 import CallService from '../api/CallService';
 import TelemetryOverlay from '../components/TelemetryOverlay';
+import { bi } from '../components/AppIcon';
 import mapStyle from '../theme/mapStyle.json';
 
 const { width, height } = Dimensions.get('window');
@@ -35,7 +36,7 @@ const Pulse = ({ delay = 0 }) => {
 };
 
 // Service type icons and labels
-const SERVICE_ICON = { bike: 'motorbike', courier: 'package-variant-closed', local_services: 'store', city_to_city: 'bus-multiple' };
+const SERVICE_ICON = { bike: bi('motorbike'), courier: bi('package-variant-closed'), local_services: bi('store'), city_to_city: bi('bus') };
 const SERVICE_LABEL = { bike: 'Biker', courier: 'Send a package', local_services: 'Local services', city_to_city: 'City to City' };
 
 const BikerHomeScreen = () => {
@@ -90,22 +91,7 @@ const BikerHomeScreen = () => {
         React.useCallback(() => {
             const currentUser = SheetService.currentUser;
             setUser(currentUser);
-
-            // Redirect to profile settings if license photo is missing
-            if (currentUser && !currentUser.licenseVerificationPhoto) {
-                Alert.alert(
-                    'Verification Required',
-                    'A photo of yourself holding your driver license is required for admin approval before you can go online.',
-                    [
-                        {
-                            text: 'Upload Now',
-                            onPress: () => navigation.navigate('ProfileSettings'),
-                            style: 'default'
-                        }
-                    ],
-                    { cancelable: false }
-                );
-            }
+            // Admin approval requirement removed as requested.
         }, [navigation])
     );
 
@@ -611,80 +597,34 @@ const BikerHomeScreen = () => {
     };
 
     const handleCallCustomer = async () => {
-        const userId = SheetService.currentUser?.id;
         const customerName = activeJob?.customerName || 'Customer';
         const customerPhone = activeJob?.customerPhone;
 
-        // first check for WebRTC support
-        const isWebRTCSupported = CallService.checkSupport ? CallService.checkSupport() : false;
-        if (!isWebRTCSupported) {
-            if (customerPhone) {
-                Alert.alert(
-                    'Call',
-                    `Call ${customerName} at ${customerPhone}?`,
-                    [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                            text: 'Call 📞',
-                            onPress: () => {
-                                SheetService.recordCall({
-                                    orderId: activeJob?.orderId,
-                                    phoneNumber: customerPhone,
-                                    name: customerName,
-                                    type: 'outgoing'
-                                }).catch(() => { });
-                                Linking.openURL(`tel:${customerPhone}`).catch(() => {
-                                    Alert.alert('Error', 'Could not make call');
-                                });
-                            }
+        if (customerPhone) {
+            Alert.alert(
+                'Call',
+                `Call ${customerName} at ${customerPhone}?`,
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                        text: 'Call 📞',
+                        onPress: () => {
+                            SheetService.recordCall({
+                                orderId: activeJob?.orderId,
+                                phoneNumber: customerPhone,
+                                name: customerName,
+                                type: 'outgoing'
+                            }).catch(() => { });
+                            Linking.openURL(`tel:${customerPhone}`).catch(() => {
+                                Alert.alert('Error', 'Could not make call');
+                            });
                         }
-                    ]
-                );
-            } else {
-                Alert.alert('Call', 'Customer phone number not available. A development build is required for in‑app VoIP.');
-            }
-            return;
-        }
-
-        if (!userId) {
-            Alert.alert('Error', 'Please log in to make calls');
-            return;
-        }
-
-        Alert.alert(
-            'Voice Call',
-            `Start a voice call with ${customerName}?`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Call 📞',
-                    onPress: async () => {
-                        setIsCalling(true);
-                        setCallState('calling');
-
-                        // requirement: record call
-                        SheetService.recordCall({
-                            orderId: activeJob?.orderId,
-                            phoneNumber: customerPhone || 'VoIP',
-                            name: customerName,
-                            type: 'outgoing'
-                        }).catch(() => { });
-
-                        // ensure call service is initialized
-                        CallService.init(userId);
-                        CallService.onCallStateChange = (state) => {
-                            setCallState(state);
-                            if (state === 'ended' || state === 'busy') {
-                                setIsCalling(false);
-                            }
-                        };
-
-                        const targetId = customerName.replace(/\s+/g, '_').toLowerCase();
-                        await CallService.initiateCall(targetId, userId);
                     }
-                }
-            ]
-        );
+                ]
+            );
+        } else {
+            Alert.alert('No Phone Number', 'Customer phone number is not available for this order.');
+        }
     };
 
     const handleChatCustomer = () => {
@@ -692,6 +632,7 @@ const BikerHomeScreen = () => {
             orderId: activeJob?.orderId,
             recipientName: activeJob?.customerName || 'Customer',
             recipientRole: 'customer',
+            recipientPhone: activeJob?.customerPhone,
         });
     };
 
@@ -752,7 +693,7 @@ const BikerHomeScreen = () => {
                     >
                         <Surface style={[styles.placeMarker, { borderColor: p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F' }]} elevation={2}>
                             <IconButton
-                                icon={p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife'}
+                                icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
                                 size={14}
                                 iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
                                 style={{ margin: 0 }}
@@ -770,7 +711,7 @@ const BikerHomeScreen = () => {
                             description={activeJob.pickup}
                         >
                             <Surface style={[styles.jobMarker, { borderColor: '#2ECC71' }]} elevation={4}>
-                                <IconButton icon="package-variant-closed" size={18} iconColor="#2ECC71" style={{ margin: 0 }} />
+                                <IconButton icon={bi('package-variant-closed')} size={18} iconColor="#2ECC71" style={{ margin: 0 }} />
                             </Surface>
                         </Marker>
                         <Marker
@@ -779,7 +720,7 @@ const BikerHomeScreen = () => {
                             description={activeJob.dropoff}
                         >
                             <Surface style={[styles.jobMarker, { borderColor: '#E74C3C' }]} elevation={4}>
-                                <IconButton icon="flag-checkered" size={18} iconColor="#E74C3C" style={{ margin: 0 }} />
+                                <IconButton icon={bi('flag-checkered')} size={18} iconColor="#E74C3C" style={{ margin: 0 }} />
                             </Surface>
                         </Marker>
                     </>
@@ -810,7 +751,7 @@ const BikerHomeScreen = () => {
                     <Pulse delay={1000} />
                     <Pulse delay={2000} />
                     <View style={styles.radarCenter}>
-                        <Avatar.Icon size={40} icon="motorbike" backgroundColor="#000" color="#A8E05F" />
+                        <Avatar.Icon size={40} icon={bi('motorbike')} backgroundColor="#000" color="#A8E05F" />
                     </View>
                 </View>
             )}
@@ -818,7 +759,7 @@ const BikerHomeScreen = () => {
             {/* Sync Indicator */}
             {isSyncing && (
                 <View style={styles.syncIndicator}>
-                    <IconButton icon="cloud-sync" size={14} iconColor="#2ECC71" style={{ margin: 0 }} />
+                    <IconButton icon={bi('cloud-sync')} size={14} iconColor="#2ECC71" style={{ margin: 0 }} />
                     <Text style={styles.syncText}>Syncing Live Data...</Text>
                 </View>
             )}
@@ -884,13 +825,13 @@ const BikerHomeScreen = () => {
                                         : 'Tap to Subscribe')}
                             </Text>
                         </View>
-                        <IconButton icon="chevron-right" size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
+                        <IconButton icon={bi('chevron-right')} size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
                     </TouchableOpacity>
                 </Animated.View>
 
                 {isOnline && pendingOrders.length > 0 && (
                     <View style={styles.pendingBadgeWrapper}>
-                        <IconButton icon="bell-ring" size={22} iconColor="#F39C12" />
+                        <IconButton icon={bi('bell-ring')} size={22} iconColor="#F39C12" />
                         <Badge style={styles.badge}>{pendingOrders.length}</Badge>
                     </View>
                 )}
@@ -906,7 +847,7 @@ const BikerHomeScreen = () => {
                                     {/* Service Type Banner */}
                                     <View style={styles.serviceTypeBanner}>
                                         <IconButton
-                                            icon={SERVICE_ICON[order.serviceType] || 'motorbike'}
+                                            icon={SERVICE_ICON[order.serviceType] || bi('motorbike')}
                                             size={20}
                                             iconColor="#F39C12"
                                             style={{ margin: 0 }}
@@ -964,7 +905,7 @@ const BikerHomeScreen = () => {
                                     {/* Customer Info */}
                                     {order.customerName && (
                                         <View style={styles.customerRow}>
-                                            <Avatar.Icon size={28} icon="account" backgroundColor="#252525" color="#BDC3C7" />
+                                            <Avatar.Icon size={28} icon={bi('account')} backgroundColor="#252525" color="#BDC3C7" />
                                             <View style={{ marginLeft: 8, flex: 1 }}>
                                                 <Text style={styles.customerName}>{order.customerName}</Text>
                                                 {order.customerPhone && (
@@ -1018,7 +959,7 @@ const BikerHomeScreen = () => {
                                                 textColor="#000"
                                                 style={{ flex: 1, borderRadius: 12 }}
                                                 onPress={() => navigation.navigate('Subscription')}
-                                                icon="lock"
+                                                icon={bi('lock')}
                                             >
                                                 Subscribe to Accept
                                             </Button>
@@ -1033,7 +974,7 @@ const BikerHomeScreen = () => {
                         <Surface style={[styles.requestCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
                             <View style={styles.cardHeader}>
                                 <Text style={styles.greenTitle}>Looking for assignments</Text>
-                                <IconButton icon="radar" size={20} />
+                                <IconButton icon={bi('radar')} size={20} />
                             </View>
                             <Text style={[styles.userName, { color: theme.colors.text }]}>Stay online to receive orders.</Text>
                             <Text style={styles.distanceText}>Nearby orders will appear here automatically.</Text>
@@ -1047,7 +988,7 @@ const BikerHomeScreen = () => {
                                 {user?.photo ? (
                                     <Avatar.Image size={50} source={{ uri: user.photo }} />
                                 ) : (
-                                    <Avatar.Icon size={50} icon="account" />
+                                    <Avatar.Icon size={50} icon={bi('account')} />
                                 )}
                             </TouchableOpacity>
                             <View style={styles.profileInfo}>
@@ -1064,19 +1005,19 @@ const BikerHomeScreen = () => {
                         </View>
                         <View style={styles.statsStrip}>
                             <View style={styles.statBox}>
-                                <IconButton icon="check-circle" size={20} iconColor={theme.colors.secondary} style={styles.statIcon} />
+                                <IconButton icon={bi('check-circle')} size={20} iconColor={theme.colors.secondary} style={styles.statIcon} />
                                 <Text style={styles.statVal}>{dashboard?.stats?.completedOrders ?? '--'}</Text>
                                 <Text style={styles.statLab}>Completed</Text>
                             </View>
                             <View style={styles.statDivider} />
                             <View style={styles.statBox}>
-                                <IconButton icon="star" size={20} iconColor="#F1C40F" style={styles.statIcon} />
+                                <IconButton icon={bi('star')} size={20} iconColor="#F1C40F" style={styles.statIcon} />
                                 <Text style={styles.statVal}>{user?.rating?.toFixed(1) || '5.0'}</Text>
                                 <Text style={styles.statLab}>Rating</Text>
                             </View>
                             <View style={styles.statDivider} />
                             <View style={styles.statBox}>
-                                <IconButton icon="bell" size={20} iconColor="#BDC3C7" style={styles.statIcon} />
+                                <IconButton icon={bi('bell')} size={20} iconColor="#BDC3C7" style={styles.statIcon} />
                                 <Text style={styles.statVal}>{dashboard?.notifications?.unreadCount ?? 0}</Text>
                                 <Text style={styles.statLab}>Alerts</Text>
                             </View>
@@ -1091,7 +1032,7 @@ const BikerHomeScreen = () => {
                     <Surface style={[styles.subscriptionCard, { backgroundColor: theme.colors.surface }]} elevation={10}>
                         <View style={styles.subscriptionHeader}>
                             <Text style={[styles.subscriptionTitle, { color: theme.colors.text }]}>Subscription Status</Text>
-                            <IconButton icon="close" size={24} iconColor={theme.colors.text} onPress={() => setShowSubscription(false)} />
+                            <IconButton icon={bi('close')} size={24} iconColor={theme.colors.text} onPress={() => setShowSubscription(false)} />
                         </View>
                         <Divider style={{ marginBottom: 20, backgroundColor: 'rgba(255,255,255,0.1)' }} />
                         {subscription ? (
@@ -1166,20 +1107,20 @@ const BikerHomeScreen = () => {
                         onPressOut={() => handlePressOut(dashboardScale)}
                         onPress={() => navigation.navigate('Dashboard')}
                     >
-                        <IconButton icon="view-dashboard" size={24} iconColor="#BDC3C7" pointerEvents="none" />
+                        <IconButton icon={bi('view-dashboard')} size={24} iconColor="#BDC3C7" pointerEvents="none" />
                         <Text style={styles.navText}>Dashboard</Text>
                     </TouchableOpacity>
                 </Animated.View>
                 <TouchableOpacity style={styles.navItem} onPress={() => setShowSubscription(true)}>
-                    <IconButton icon="credit-card" size={24} iconColor={subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C'} />
+                    <IconButton icon={bi('credit-card')} size={24} iconColor={subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C'} />
                     <Text style={styles.navText}>Subscription</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('RequestHistory')}>
-                    <IconButton icon="history" size={24} iconColor="#BDC3C7" />
+                    <IconButton icon={bi('history')} size={24} iconColor="#BDC3C7" />
                     <Text style={styles.navText}>History</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ProfileSettings')}>
-                    <IconButton icon="account" size={24} iconColor="#BDC3C7" />
+                    <IconButton icon={bi('account')} size={24} iconColor="#BDC3C7" />
                     <Text style={styles.navText}>Profile</Text>
                 </TouchableOpacity>
             </Surface>
@@ -1201,7 +1142,7 @@ const BikerHomeScreen = () => {
                         {activeJob.serviceType && (
                             <View style={styles.serviceTypeRow}>
                                 <IconButton
-                                    icon={SERVICE_ICON[activeJob.serviceType] || 'motorbike'}
+                                    icon={SERVICE_ICON[activeJob.serviceType] || bi('motorbike')}
                                     size={16}
                                     iconColor="#F39C12"
                                     style={{ margin: 0 }}
@@ -1259,7 +1200,7 @@ const BikerHomeScreen = () => {
                         {/* Customer Info */}
                         {activeJob.customerName && (
                             <View style={styles.customerRow}>
-                                <Avatar.Icon size={32} icon="account" backgroundColor="#252525" color="#BDC3C7" />
+                                <Avatar.Icon size={32} icon={bi('account')} backgroundColor="#252525" color="#BDC3C7" />
                                 <View style={{ marginLeft: 10, flex: 1 }}>
                                     <Text style={styles.customerName}>{activeJob.customerName}</Text>
                                     {activeJob.customerPhone && (
@@ -1308,19 +1249,19 @@ const BikerHomeScreen = () => {
                                         setCallState('idle');
                                     }}
                                 >
-                                    <IconButton icon="phone-hangup" size={22} iconColor="#E74C3C" style={{ margin: 0 }} />
+                                    <IconButton icon={bi('phone-hangup')} size={22} iconColor="#E74C3C" style={{ margin: 0 }} />
                                     <Text style={styles.commBtnText}>Hang Up</Text>
                                 </TouchableOpacity>
                             ) : (
                                 <TouchableOpacity style={styles.commBtn} onPress={handleCallCustomer}>
-                                    <IconButton icon="phone" size={22} iconColor="#2ECC71" style={{ margin: 0 }} />
+                                    <IconButton icon={bi('phone')} size={22} iconColor="#2ECC71" style={{ margin: 0 }} />
                                     <Text style={styles.commBtnText}>Call</Text>
                                 </TouchableOpacity>
                             )}
 
                             {!isCalling && (
                                 <TouchableOpacity style={styles.commBtn} onPress={handleChatCustomer}>
-                                    <IconButton icon="chat" size={22} iconColor="#3498DB" style={{ margin: 0 }} />
+                                    <IconButton icon={bi('chat')} size={22} iconColor="#3498DB" style={{ margin: 0 }} />
                                     <Text style={styles.commBtnText}>Chat</Text>
                                 </TouchableOpacity>
                             )}
@@ -1353,7 +1294,7 @@ const BikerHomeScreen = () => {
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                     >
-                        <IconButton icon="motorbike" iconColor="#000" size={30} />
+                        <IconButton icon={bi('motorbike')} iconColor="#000" size={30} />
                         <Text style={styles.modalTitle}>Welcome, Biker!</Text>
                     </LinearGradient>
 
@@ -1361,15 +1302,15 @@ const BikerHomeScreen = () => {
                         <Text style={styles.welcomeSubtitle}>How to use Biker platform</Text>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="gift" iconColor="#2ECC71" size={24} />
+                            <IconButton icon={bi('gift')} iconColor="#2ECC71" size={24} />
                             <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>30-Day Free Trial</Text>
-                                <Text style={styles.tipDesc}>Your first 30 days are free! Start earning immediately with full access to all orders.</Text>
+                                <Text style={styles.tipTitle}>7-Day Free Trial</Text>
+                                <Text style={styles.tipDesc}>Your first 7 days are free! Start earning immediately with full access to all orders.</Text>
                             </View>
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="eye-outline" iconColor="#2ECC71" size={24} />
+                            <IconButton icon={bi('eye-outline')} iconColor="#2ECC71" size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>Restricted Mode</Text>
                                 <Text style={styles.tipDesc}>When your plan expires, you can still stay online to view incoming requests, but you must subscribe to accept them.</Text>
@@ -1377,7 +1318,7 @@ const BikerHomeScreen = () => {
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="phone-in-talk" iconColor="#2ECC71" size={24} />
+                            <IconButton icon={bi('phone-in-talk')} iconColor="#2ECC71" size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>In-App Calling</Text>
                                 <Text style={styles.tipDesc}>Once you accept a job, you can call the customer for free through the app. All calls are logged for your safety.</Text>
@@ -1385,7 +1326,7 @@ const BikerHomeScreen = () => {
                         </View>
 
                         <View style={styles.tipRow}>
-                            <IconButton icon="delete-sweep" iconColor="#2ECC71" size={24} />
+                            <IconButton icon={bi('delete-sweep')} iconColor="#2ECC71" size={24} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.tipTitle}>History Clearing</Text>
                                 <Text style={styles.tipDesc}>Every new subscription clears your old history for a fresh start. You can also wipe your account at any time.</Text>
@@ -1409,6 +1350,47 @@ const BikerHomeScreen = () => {
                     </Button>
                 </Modal>
             </Portal>
+            {/* App Locked Overlay */}
+            {(() => {
+                const now = new Date();
+                const trialActive = user?.trialExpiryDate && new Date(user.trialExpiryDate) > now;
+                const subActive = subscription?.subscriptionStatus === 'active';
+
+                if (!trialActive && !subActive) {
+                    return (
+                        <View style={[styles.lockedOverlay, { paddingTop: insets.top }]}>
+                            <Surface style={styles.lockedCard} elevation={12}>
+                                <IconButton icon={bi('lock-alert')} size={60} iconColor="#E74C3C" />
+                                <Text style={styles.lockedTitle}>Account Restricted</Text>
+                                <Text style={styles.lockedSubtitle}>
+                                    Your 7-day free trial has ended. To continue accepting orders and earning, please subscribe to one of our plans.
+                                </Text>
+                                <Button
+                                    mode="contained"
+                                    onPress={() => navigation.navigate('Subscription')}
+                                    style={styles.lockedBtn}
+                                    buttonColor="#2ECC71"
+                                    textColor="#000"
+                                    icon={bi('credit-card')}
+                                >
+                                    View Subscription Plans
+                                </Button>
+                                <Button
+                                    mode="text"
+                                    onPress={async () => {
+                                        await SheetService.logout();
+                                        navigation.replace('Login');
+                                    }}
+                                    textColor="#7F8C8D"
+                                >
+                                    Log Out
+                                </Button>
+                            </Surface>
+                        </View>
+                    );
+                }
+                return null;
+            })()}
         </View>
     );
 };
@@ -1671,6 +1653,44 @@ const styles = StyleSheet.create({
         color: '#2ECC71',
         fontSize: 11,
         fontWeight: 'bold',
+    },
+    // Locked Overlay Styles
+    lockedOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.9)',
+        zIndex: 9999,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    lockedCard: {
+        width: '100%',
+        backgroundColor: '#1C1C1E',
+        borderRadius: 28,
+        padding: 30,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(231, 76, 60, 0.3)',
+    },
+    lockedTitle: {
+        color: '#FFF',
+        fontSize: 24,
+        fontWeight: 'bold',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    lockedSubtitle: {
+        color: '#BDC3C7',
+        fontSize: 15,
+        lineHeight: 22,
+        textAlign: 'center',
+        marginBottom: 30,
+    },
+    lockedBtn: {
+        width: '100%',
+        borderRadius: 14,
+        paddingVertical: 6,
+        marginBottom: 10,
     },
 });
 
