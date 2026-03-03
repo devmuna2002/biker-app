@@ -83,4 +83,4 @@ The project is organized as a monorepo-style structure for ease of development:
 ---
 
 ## ⚖️ License
-This project is [UNLICENSED](LICENSE). All rights reserved.
+This project is licensed under the [MIT License](LICENSE).
