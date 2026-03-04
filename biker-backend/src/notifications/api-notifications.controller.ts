@@ -1,13 +1,14 @@
-import { Controller, Get, Patch, Param, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, ForbiddenException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser } from '../common/current-user.decorator';
 import { Roles } from '../common/roles.decorator';
 import { UserRole } from '../users/user.entity';
+import { Public } from '../common/public.decorator';
 
 @Controller('api/notifications')
 @Roles(UserRole.CUSTOMER, UserRole.DRIVER, UserRole.ADMIN)
 export class ApiNotificationsController {
-    constructor(private readonly notifications: NotificationsService) {}
+    constructor(private readonly notifications: NotificationsService) { }
 
     @Get()
     async list(@CurrentUser() user: any) {
@@ -33,5 +34,25 @@ export class ApiNotificationsController {
         const match = (all || []).find((n: any) => String(n.id) === String(id));
         if (!match) throw new ForbiddenException('Forbidden');
         return this.notifications.markAsRead(Number(id));
+    }
+
+    // Also support POST for compatibility
+    @Post(':id/read')
+    async markReadPost(@CurrentUser() user: any, @Param('id') id: string) {
+        return this.markRead(user, id);
+    }
+
+    @Post('send')
+    async sendNotification(@Body() body: { userId: number; title: string; body: string }) {
+        try {
+            await this.notifications.create(
+                { id: body.userId } as any,
+                body.title || 'notification',
+                body.body || '',
+            );
+            return { success: true, message: 'Notification sent' };
+        } catch (e) {
+            return { success: false, message: 'Failed to send notification' };
+        }
     }
 }

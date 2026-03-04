@@ -161,6 +161,26 @@ const SheetService = {
     }
   },
 
+  providerAuth: async ({ email, name, provider, providerId, role, photo, vehicleDetails, vehicleNumber, phone, city, country, countryCode }) => {
+    try {
+      const backendRole = toBackendRole(role);
+      const res = await client.post('/api/auth/provider', {
+        email, name, provider, providerId, role: backendRole, photo, vehicleDetails, vehicleNumber, phone, city, country, countryCode
+      });
+
+      if (res?.data?.success) {
+        const u = { ...res.data.data.user, role: toAppRole(res.data.data.user.role) };
+        await AsyncStorage.setItem(storageKeys.token, res.data.data.accessToken);
+        await AsyncStorage.setItem(storageKeys.user, JSON.stringify(u));
+        SheetService.currentUser = u;
+        return { ...res.data, data: { ...res.data.data, user: u } };
+      }
+      return res?.data || { success: false, message: 'Provider auth failed' };
+    } catch (err) {
+      return { success: false, message: extractError(err, 'Provider auth failed') };
+    }
+  },
+
   generateOtp: async (identifier, purpose = 'email_verification', role = 'user') => {
     try {
       const backendRole = toBackendRole(role);
@@ -521,7 +541,7 @@ const SheetService = {
   // ── NOTIFICATIONS ─────────────────────────────────────────────
   markAsRead: async (notificationId) => {
     try {
-      const res = await client.post(`/api/notifications/${notificationId}/read`);
+      const res = await client.patch(`/api/notifications/${notificationId}/read`);
       return res.data;
     } catch (e) {
       return { success: false };

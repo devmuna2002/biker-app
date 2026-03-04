@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView, Image } from 'react-native';
-import { Text, Surface, useTheme, IconButton } from 'react-native-paper';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { Text, Surface, useTheme, IconButton, TextInput } from 'react-native-paper';
 import Animated, {
     useSharedValue,
     useAnimatedStyle,
@@ -9,20 +9,25 @@ import Animated, {
     FadeInDown,
     FadeInUp
 } from 'react-native-reanimated';
-import CustomInput from '../components/CustomInput';
-import CustomButton from '../components/CustomButton';
 import SheetService from '../api/SheetService';
 import { bi } from '../components/AppIcon';
 import BrandMark from '../components/BrandMark';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import { supabase } from '../api/SheetService';
+
+WebBrowser.maybeCompleteAuthSession();
 
 const LoginScreen = ({ navigation, route }) => {
     const params = route?.params || {};
     const theme = useTheme();
-    const [role, setRole] = useState(params.role || 'user'); // 'user' | 'biker'
+    const [role, setRole] = useState(params.role || 'user');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+    const [googleLoading, setGoogleLoading] = useState(false);
     const [error, setError] = useState('');
+    const [secureText, setSecureText] = useState(true);
 
     const titleOpacity = useSharedValue(0);
     const titleTranslateY = useSharedValue(-20);
@@ -37,9 +42,10 @@ const LoginScreen = ({ navigation, route }) => {
         transform: [{ translateY: titleTranslateY.value }],
     }));
 
+    // ── Manual Login ──────────────────────────────────────────────
     const handleLogin = async () => {
-        if (!email || !password) {
-            setError('Please enter email and password');
+        if (!email.trim() || !password.trim()) {
+            setError('Please enter both email and password');
             return;
         }
 
@@ -47,41 +53,105 @@ const LoginScreen = ({ navigation, route }) => {
         setError('');
 
         try {
-            const result = await SheetService.loginUser(email, password, role);
+            const res = await SheetService.loginUser(email.trim(), password.trim(), role);
 
-            if (result.success) {
+            if (res.success) {
                 if (role === 'biker') {
                     navigation.replace('BikerApp');
                 } else {
                     navigation.replace('MainApp');
                 }
             } else {
-                setError(result.message || 'Login failed');
+                setError(res.message || 'Invalid credentials');
             }
         } catch (e) {
-            setError(e.message || 'Login failed. Please try again.');
+            setError('An error occurred. Please try again.');
         } finally {
             setLoading(false);
         }
     };
 
-    const handleSocialLogin = async (provider) => {
-        if (provider === 'Google') {
-            setLoading(true);
-            setError('');
-            try {
-                const res = await SheetService.signInWithGoogle();
-                if (!res.success) {
-                    setError(res.message);
-                }
-                // Redirect will be handled by Supabase/Browser
-            } catch (err) {
-                setError('Google Login failed');
-            } finally {
-                setLoading(false);
-            }
+    // ── Handle backend login/register after Google OAuth ──
+    const handleProviderAuth = async (userEmail, name, photo, providerId, providerName) => {
+        const res = await SheetService.providerAuth({
+            email: userEmail,
+            name,
+            provider: providerName,
+            providerId,
+            role,
+            photo
+        });
+
+        if (res?.success) {
+            navigation.replace(role === 'biker' ? 'BikerApp' : 'MainApp');
         } else {
-            console.log(`Social Login with ${provider}`);
+            setError(res?.message || `Failed to sign in with ${providerName}. Try again.`);
+        }
+    };
+
+    // ── Google Sign-In ──────────────────────────────────────────────
+    const handleGoogleSignIn = async () => {
+        setGoogleLoading(true);
+        setError('');
+
+        try {
+            if (!supabase) {
+                setError('Authentication service not configured');
+                setGoogleLoading(false);
+                return;
+            }
+
+            const redirectUrl = makeRedirectUri({ scheme: 'bikerapp', path: 'auth/callback' });
+
+            const { data, error: authError } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: redirectUrl,
+                    skipBrowserRedirect: false,
+                    queryParams: { prompt: 'select_account' },
+                },
+            });
+
+            if (authError) throw authError;
+
+            if (data?.url) {
+                const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+
+                if (result.type === 'success' && result.url) {
+                    const url = new URL(result.url);
+                    const fragment = url.hash?.substring(1);
+                    const params = new URLSearchParams(fragment);
+                    const accessToken = params.get('access_token');
+                    const refreshToken = params.get('refresh_token');
+
+                    if (accessToken) {
+                        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+                            access_token: accessToken,
+                            refresh_token: refreshToken,
+                        });
+
+                        if (sessionError) throw sessionError;
+
+                        const supaUser = sessionData?.user;
+                        if (!supaUser) throw new Error('No user from Google sign-in');
+
+                        const googleEmail = supaUser.email;
+                        const name = supaUser.user_metadata?.full_name || supaUser.user_metadata?.name || googleEmail.split('@')[0];
+                        const photo = supaUser.user_metadata?.avatar_url || null;
+
+                        await handleProviderAuth(googleEmail, name, photo, supaUser.id, 'google');
+                    } else {
+                        setError('Sign-in was cancelled or failed. Please try again.');
+                    }
+                } else {
+                    setError('Sign-in cancelled');
+                }
+            }
+        } catch (e) {
+            console.error('[LoginScreen] Google Sign-In Error:', e);
+            setError(e.message || 'Google sign-in failed. Please try again.');
+        } finally {
+            setGoogleLoading(false);
         }
     };
 
@@ -93,99 +163,130 @@ const LoginScreen = ({ navigation, route }) => {
             <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
                 <View style={styles.content}>
                     <Animated.View style={[styles.header, titleStyle]}>
-                        <BrandMark
-                            size={50}
-                            subtitle="Welcome Back"
-                        />
+                        <BrandMark size={50} subtitle="" />
+                    </Animated.View>
+
+                    {/* Welcome Text */}
+                    <Animated.View entering={FadeInDown.delay(100).duration(800)} style={styles.welcomeSection}>
+                        <Text style={styles.welcomeTitle}>Welcome Back</Text>
+                        <Text style={styles.welcomeSubtitle}>
+                            Sign in to continue
+                        </Text>
                     </Animated.View>
 
                     {/* Role Toggle */}
-                    <Animated.View entering={FadeInDown.delay(100).duration(800)}>
+                    <Animated.View entering={FadeInDown.delay(200).duration(800)}>
                         <View style={styles.roleContainer}>
                             <TouchableOpacity
                                 style={[styles.roleButton, role === 'user' && styles.roleButtonActive]}
                                 onPress={() => setRole('user')}
                             >
+                                <IconButton icon={bi('account')} size={18} iconColor={role === 'user' ? '#000' : '#888'} style={{ margin: 0 }} />
                                 <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>Customer</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.roleButton, role === 'biker' && styles.roleButtonActive]}
                                 onPress={() => setRole('biker')}
                             >
+                                <IconButton icon={bi('motorbike')} size={18} iconColor={role === 'biker' ? '#000' : '#888'} style={{ margin: 0 }} />
                                 <Text style={[styles.roleText, role === 'biker' && styles.roleTextActive]}>Biker</Text>
                             </TouchableOpacity>
                         </View>
                     </Animated.View>
 
-                    <Animated.View entering={FadeInDown.delay(200).duration(800)}>
+                    {/* Auth Form and Buttons */}
+                    <Animated.View entering={FadeInDown.delay(300).duration(800)}>
                         <Surface style={styles.surface} elevation={0}>
-                            <CustomInput
-                                label="Email or ID"
-                                value={email}
-                                onChangeText={(text) => { setEmail(text); setError(''); }}
-                                keyboardType="email-address"
-                                autoCapitalize="none"
-                                placeholder="Enter your credentials"
-                                style={styles.input}
-                                textColor="#FFFFFF"
-                                activeOutlineColor="#00FD3F"
-                            />
-
-                            <CustomInput
-                                label="Password"
-                                value={password}
-                                onChangeText={(text) => { setPassword(text); setError(''); }}
-                                secureTextEntry
-                                placeholder="••••••••"
-                                style={styles.input}
-                                textColor="#FFFFFF"
-                                activeOutlineColor="#00FD3F"
-                            />
-
-                            <TouchableOpacity style={styles.forgotPassword} onPress={() => console.log('Forgot Password')}>
-                                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-                            </TouchableOpacity>
-
                             {error ? (
-                                <Text style={styles.errorText}>{error}</Text>
+                                <View style={styles.errorBox}>
+                                    <IconButton icon={bi('alert-circle')} size={18} iconColor="#ff6b6b" style={{ margin: 0 }} />
+                                    <Text style={styles.errorText}>{error}</Text>
+                                </View>
                             ) : null}
 
-                            <CustomButton
-                                title="Sign In"
-                                onPress={handleLogin}
-                                loading={loading}
-                                disabled={loading}
-                                style={styles.button}
-                                labelStyle={styles.buttonLabel}
+                            {/* Manual Login Fields */}
+                            <TextInput
+                                label="Email"
+                                value={email}
+                                onChangeText={setEmail}
+                                mode="outlined"
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                                left={<TextInput.Icon icon={bi('mail')} />}
+                                style={styles.input}
+                                outlineColor="rgba(255,255,255,0.1)"
+                                activeOutlineColor="#00FD3F"
+                                theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
+
+                            <TextInput
+                                label="Password"
+                                value={password}
+                                onChangeText={setPassword}
+                                mode="outlined"
+                                secureTextEntry={secureText}
+                                left={<TextInput.Icon icon={bi('lock')} />}
+                                right={<TextInput.Icon icon={bi(secureText ? 'eye-off' : 'eye')} onPress={() => setSecureText(!secureText)} forceTextInputFocus={false} />}
+                                style={styles.input}
+                                outlineColor="rgba(255,255,255,0.1)"
+                                activeOutlineColor="#00FD3F"
+                                theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
+                            />
+
+                            <TouchableOpacity
+                                style={styles.loginButton}
+                                onPress={handleLogin}
+                                disabled={loading || googleLoading}
+                                activeOpacity={0.8}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator size="small" color="#000" />
+                                ) : (
+                                    <Text style={styles.loginButtonText}>Sign In</Text>
+                                )}
+                            </TouchableOpacity>
+
+                            <View style={styles.dividerContainer}>
+                                <View style={styles.divider} />
+                                <Text style={styles.dividerText}>OR</Text>
+                                <View style={styles.divider} />
+                            </View>
+
+                            {/* Google Button */}
+                            <TouchableOpacity
+                                style={styles.googleButton}
+                                onPress={handleGoogleSignIn}
+                                disabled={loading || googleLoading}
+                                activeOpacity={0.8}
+                            >
+                                {googleLoading ? (
+                                    <ActivityIndicator size="small" color="#FFF" />
+                                ) : (
+                                    <>
+                                        <View style={styles.providerIconWrap}>
+                                            <IconButton icon={bi('google')} size={20} iconColor="#FFF" style={{ margin: 0 }} />
+                                        </View>
+                                        <Text style={styles.providerButtonText}>Continue with Google</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
+
                         </Surface>
                     </Animated.View>
 
-                    <Animated.View entering={FadeInDown.delay(300).duration(800)} style={styles.dividerContainer}>
-                        <View style={styles.divider} />
-                        <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
-                        <View style={styles.divider} />
-                    </Animated.View>
-
-                    <Animated.View entering={FadeInDown.delay(400).duration(800)} style={styles.socialContainer}>
-                        <TouchableOpacity style={styles.socialButton} onPress={() => handleSocialLogin('Google')}>
-                            <IconButton icon={bi('google')} size={24} iconColor="#FFF" />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.socialButton} onPress={() => handleSocialLogin('Apple')}>
-                            <IconButton icon={bi('apple')} size={24} iconColor="#FFF" />
-                        </TouchableOpacity>
-                    </Animated.View>
-
-                    <Animated.View entering={FadeInUp.delay(500).duration(800)} style={styles.footer}>
-                        <Text style={styles.footerText}>
-                            Don't have an account?{" "}
-                            <Text style={styles.link} onPress={() => navigation.navigate('Register', { role })}>
-                                Register
-                            </Text>
+                    {/* Notice at bottom */}
+                    <Animated.View entering={FadeInUp.delay(400).duration(800)} style={styles.footer}>
+                        <Text style={styles.termsText}>
+                            Don't have an account?{' '}
+                            <Text style={styles.link} onPress={() => navigation.navigate('Register', { role })}>Create one</Text>
+                        </Text>
+                        <Text style={[styles.termsText, { marginTop: 16, fontSize: 12 }]}>
+                            By continuing, you agree to our{' '}
+                            <Text style={styles.link}>Terms of Service</Text>
+                            {' '}and{' '}
+                            <Text style={styles.link}>Privacy Policy</Text>
                         </Text>
                     </Animated.View>
-
-
                 </View>
             </ScrollView>
         </KeyboardAvoidingView>
@@ -196,39 +297,63 @@ const styles = StyleSheet.create({
     container: { flex: 1 },
     scrollContent: { flexGrow: 1 },
     content: { flex: 1, justifyContent: 'center', padding: 24, paddingVertical: 40 },
-    header: { marginBottom: 32, alignItems: 'center' },
-    headerTitle: { color: '#888', marginTop: 8, fontSize: 16 },
+    header: { marginBottom: 20, alignItems: 'center' },
+    welcomeSection: { alignItems: 'center', marginBottom: 24 },
+    welcomeTitle: {
+        fontSize: 26, fontWeight: 'bold', color: '#FFFFFF', textAlign: 'center',
+    },
+    welcomeSubtitle: {
+        fontSize: 14, color: '#777', marginTop: 4, textAlign: 'center',
+    },
     roleContainer: {
         flexDirection: 'row', justifyContent: 'center', marginBottom: 24, gap: 12,
     },
     roleButton: {
-        paddingHorizontal: 28, paddingVertical: 12, borderRadius: 25, borderWidth: 1, borderColor: '#333',
-        backgroundColor: 'rgba(255,255,255,0.02)',
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 20, paddingVertical: 10, borderRadius: 25,
+        borderWidth: 1, borderColor: '#333', backgroundColor: 'rgba(255,255,255,0.02)', gap: 4,
     },
     roleButtonActive: {
         backgroundColor: '#00FD3F', borderColor: '#00FD3F',
         shadowColor: '#00FD3F', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
     },
-    roleText: { color: '#888', fontWeight: 'normal' },
-    roleTextActive: { color: '#000' },
-    surface: { borderRadius: 24, padding: 24, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-    input: { marginBottom: 16, backgroundColor: 'transparent' },
-    forgotPassword: { alignSelf: 'flex-end', marginBottom: 24 },
-    forgotPasswordText: { color: '#00FD3F', fontSize: 13, fontWeight: 'normal' },
-    errorText: { color: '#ff6b6b', textAlign: 'center', marginBottom: 16, fontSize: 13 },
-    button: { height: 56, borderRadius: 16, backgroundColor: '#00FD3F', justifyContent: 'center' },
-    buttonLabel: { color: '#000', fontSize: 18, fontWeight: 'normal' },
-    dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 32 },
-    divider: { flex: 1, height: 1, backgroundColor: '#222' },
-    dividerText: { color: '#444', marginHorizontal: 16, fontSize: 10, fontWeight: 'normal' },
-    socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 20 },
-    socialButton: {
-        width: 60, height: 60, borderRadius: 30, backgroundColor: '#1A1A1A',
-        justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333'
+    roleText: { color: '#888', fontWeight: 'normal', fontSize: 13 },
+    roleTextActive: { color: '#000', fontWeight: '600', fontSize: 13 },
+    surface: {
+        borderRadius: 20, padding: 20, backgroundColor: 'rgba(255,255,255,0.03)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
     },
-    footer: { marginTop: 40, alignItems: 'center' },
-    footerText: { color: '#888', fontSize: 15 },
-    link: { color: '#00FD3F', fontWeight: 'normal' },
+    errorBox: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: 'rgba(255,107,107,0.1)', borderRadius: 10, padding: 10, marginBottom: 16, gap: 8,
+    },
+    errorText: { color: '#ff6b6b', fontSize: 12, flex: 1 },
+    input: {
+        marginBottom: 16, height: 50, fontSize: 14,
+    },
+    loginButton: {
+        backgroundColor: '#00FD3F', borderRadius: 12, height: 48,
+        alignItems: 'center', justifyContent: 'center', marginTop: 8,
+    },
+    loginButtonText: { color: '#000', fontSize: 15, fontWeight: 'bold' },
+    dividerContainer: {
+        flexDirection: 'row', alignItems: 'center', marginVertical: 20,
+    },
+    divider: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)' },
+    dividerText: { marginHorizontal: 12, color: '#666', fontSize: 12 },
+    googleButton: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: '#1A1A1A', borderRadius: 12, height: 48,
+        borderWidth: 1, borderColor: '#333', gap: 10,
+    },
+    providerIconWrap: {
+        width: 32, height: 32, borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.08)', justifyContent: 'center', alignItems: 'center',
+    },
+    providerButtonText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
+    footer: { marginTop: 24, alignItems: 'center' },
+    termsText: { color: '#777', fontSize: 14, textAlign: 'center' },
+    link: { color: '#00FD3F', fontWeight: '600' },
 });
 
 export default LoginScreen;

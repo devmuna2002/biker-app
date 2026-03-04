@@ -18,8 +18,12 @@ export class UsersController {
     @Patch('me')
     @UseGuards(JwtAuthGuard)
     async updateMe(@CurrentUser() user: any, @Body() body: UpdateMeDto) {
-        const updated = await this.usersService.updateMe(user.id, body);
-        return { success: true, data: { user: updated } };
+        try {
+            const updated = await this.usersService.updateMe(user.id, body);
+            return { success: true, data: { user: updated } };
+        } catch (error) {
+            return { success: false, message: error.message, stack: error.stack };
+        }
     }
 
     @Patch(':id')

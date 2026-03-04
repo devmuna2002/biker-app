@@ -191,6 +191,61 @@ export class AuthService implements OnModuleInit {
         return this.issueSession(user, meta);
     }
 
+    async providerAuth(input: {
+        email: string;
+        name: string;
+        provider: string;
+        providerId: string;
+        role?: string;
+        photo?: string;
+        vehicleDetails?: string;
+        vehicleNumber?: string;
+    }, meta: { ip: string | null; userAgent: string | null }) {
+        if (!input.email || !input.provider || !input.providerId) {
+            throw new ForbiddenException('Missing provider information');
+        }
+
+        const email = input.email.toLowerCase().trim();
+        const role = (input.role as UserRole) || UserRole.CUSTOMER;
+
+        let user = await this.usersRepo.findOne({ where: { email, role } });
+
+        if (!user) {
+            const password = `${input.provider}_${input.providerId}`;
+            user = this.usersRepo.create({
+                name: input.name.trim(),
+                email,
+                role,
+                photo: input.photo,
+                passwordHash: await bcrypt.hash(password, 10),
+            });
+            user = await this.usersRepo.save(user);
+
+            if (user.role === UserRole.DRIVER) {
+                const trialDays = 7;
+                const trialExpiryAt = new Date();
+                trialExpiryAt.setDate(trialExpiryAt.getDate() + trialDays);
+
+                const biker = this.bikersRepo.create({
+                    user: user,
+                    vehicleDetails: input.vehicleDetails || 'N/A',
+                    vehicleNumber: input.vehicleNumber || null,
+                    vehicleType: DriverVehicleType.BIKE,
+                    isOnline: false,
+                    isAvailable: false,
+                    verificationStatus: 'approved',
+                    trialExpiryDate: trialExpiryAt,
+                    subscriptionStatus: 'inactive',
+                } as any);
+                await this.bikersRepo.save(biker);
+            }
+        }
+
+        if (user.disabledAt) throw new ForbiddenException('Account has been disabled');
+
+        return this.issueSession(user, meta);
+    }
+
     async logout(sessionId: string, userId: number) {
         const session = await this.sessionsRepo.findOne({ where: { id: sessionId }, relations: ['user'] });
         if (!session || session.user?.id !== userId) return { success: true };

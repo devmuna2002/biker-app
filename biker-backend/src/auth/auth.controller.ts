@@ -4,6 +4,7 @@ import { CurrentUser } from '../common/current-user.decorator';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ProviderAuthDto } from './dto/provider.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Controller('api/auth')
@@ -42,6 +43,23 @@ export class AuthController {
             return {
                 success: false,
                 message: error?.message || 'Login failed'
+            };
+        }
+    }
+
+    @Public()
+    @Post('provider')
+    async providerAuth(@Body() dto: ProviderAuthDto, @Req() req: any) {
+        try {
+            const meta = {
+                ip: (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || null,
+                userAgent: (req.headers['user-agent'] as string) || null,
+            };
+            return await this.auth.providerAuth(dto, meta);
+        } catch (error) {
+            return {
+                success: false,
+                message: error?.message || 'Provider authentication failed'
             };
         }
     }

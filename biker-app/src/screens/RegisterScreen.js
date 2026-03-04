@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, Alert, ScrollView } from 'react-native';
-import { Text, Surface, useTheme, IconButton } from 'react-native-paper';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { Text, Surface, useTheme, IconButton, TextInput } from 'react-native-paper';
 import Animated, {
     useSharedValue,
     useAnimatedStyle,
@@ -9,34 +9,26 @@ import Animated, {
     FadeInDown,
     FadeInUp
 } from 'react-native-reanimated';
-import CustomInput from '../components/CustomInput';
-import CustomButton from '../components/CustomButton';
 import SheetService from '../api/SheetService';
+import { bi } from '../components/AppIcon';
 import BrandMark from '../components/BrandMark';
-import CountryPicker from '../components/CountryPicker';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import { supabase } from '../api/SheetService';
+
+WebBrowser.maybeCompleteAuthSession();
 
 const RegisterScreen = ({ navigation, route }) => {
     const params = route?.params || {};
     const theme = useTheme();
-    const [role, setRole] = useState(params.role || 'user'); // 'user' | 'biker'
+    const [role, setRole] = useState(params.role || 'user');
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [name, setName] = useState('');
-    const [phone, setPhone] = useState('');
-    const [vehicleNumber, setVehicleNumber] = useState('');
-    const [city, setCity] = useState('');
-    const [country, setCountry] = useState('Zimbabwe');
-    const [countryCode, setCountryCode] = useState('ZW');
-    const [callingCode, setCallingCode] = useState('+263');
-    const [showCountryPicker, setShowCountryPicker] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [googleLoading, setGoogleLoading] = useState(false);
     const [error, setError] = useState('');
-    const [plans, setPlans] = useState([]);
-    const [subscriptionType, setSubscriptionType] = useState('weekly');
-
-    useEffect(() => {
-        // No longer fetching plans for registration
-    }, [role]);
+    const [secureText, setSecureText] = useState(true);
 
     const titleOpacity = useSharedValue(0);
     const titleTranslateY = useSharedValue(-20);
@@ -51,9 +43,21 @@ const RegisterScreen = ({ navigation, route }) => {
         transform: [{ translateY: titleTranslateY.value }],
     }));
 
+    // ── Manual Registration ──────────────────────────────────────────────
     const handleRegister = async () => {
-        if (!email || !password || !name || (role === 'user' && !phone)) {
-            setError('Please fill in all required fields');
+        if (!name.trim() || !email.trim() || !password.trim()) {
+            setError('Please fill in all fields');
+            return;
+        }
+
+        if (role === 'biker') {
+            // For bikers, move to BikerDetails to collect vehicle info
+            navigation.navigate('BikerDetails', {
+                name: name.trim(),
+                email: email.trim(),
+                password: password.trim(),
+                role: 'biker'
+            });
             return;
         }
 
@@ -61,30 +65,110 @@ const RegisterScreen = ({ navigation, route }) => {
         setError('');
 
         try {
-            // Combine calling code and phone for customer
-            const fullPhone = role === 'user' ? (callingCode + phone.replace(/[^0-9]/g, '')) : '';
-
-            // Direct registration bypassing OTP Verification
             const res = await SheetService.registerUser({
-                name,
-                email,
-                password,
-                phone: fullPhone,
-                city,
-                country,
-                countryCode,
-                role: 'user'
+                name: name.trim(),
+                email: email.trim(),
+                password: password.trim(),
+                role: 'user',
             });
 
-            if (res.success) {
+            if (res?.success) {
                 navigation.replace('MainApp');
             } else {
-                setError(res.message || 'Failed to register account');
+                setError(res?.message || 'Registration failed');
             }
         } catch (e) {
-            setError(e.message || 'Registration failed. Please try again.');
+            setError('An error occurred. Please try again.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    // ── Handle provider registration ──
+    const handleProviderRegister = async (userEmail, userName, photo, providerId, providerName) => {
+        if (role === 'biker') {
+            navigation.navigate('BikerDetails', {
+                name: userName, email: userEmail, photo,
+                provider: providerName,
+                providerId,
+                role: 'biker'
+            });
+            return;
+        }
+
+        const res = await SheetService.providerAuth({
+            email: userEmail,
+            name: userName,
+            provider: providerName,
+            providerId,
+            role: 'user',
+            photo
+        });
+
+        if (res?.success) {
+            navigation.replace('MainApp');
+        } else {
+            setError(res?.message || 'Registration failed');
+        }
+    };
+
+    // ── Google Sign-Up ──
+    const handleGoogleSignUp = async () => {
+        setGoogleLoading(true);
+        setError('');
+
+        try {
+            if (!supabase) { setError('Auth not configured'); setGoogleLoading(false); return; }
+
+            const redirectUrl = makeRedirectUri({ scheme: 'bikerapp', path: 'auth/callback' });
+
+            const { data, error: authError } = await supabase.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: redirectUrl,
+                    queryParams: { prompt: 'select_account' },
+                },
+            });
+
+            if (authError) throw authError;
+
+            if (data?.url) {
+                const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+
+                if (result.type === 'success' && result.url) {
+                    const url = new URL(result.url);
+                    const fragment = url.hash?.substring(1);
+                    const params = new URLSearchParams(fragment);
+                    const accessToken = params.get('access_token');
+                    const refreshToken = params.get('refresh_token');
+
+                    if (accessToken) {
+                        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+                            access_token: accessToken,
+                            refresh_token: refreshToken,
+                        });
+                        if (sessionError) throw sessionError;
+
+                        const supaUser = sessionData?.user;
+                        if (!supaUser) throw new Error('No user from Google');
+
+                        const googleEmail = supaUser.email;
+                        const googleName = supaUser.user_metadata?.full_name || supaUser.user_metadata?.name || googleEmail.split('@')[0];
+                        const photo = supaUser.user_metadata?.avatar_url || null;
+
+                        await handleProviderRegister(googleEmail, googleName, photo, supaUser.id, 'google');
+                    } else {
+                        setError('Sign-up cancelled or failed.');
+                    }
+                } else {
+                    setError('Sign-up cancelled');
+                }
+            }
+        } catch (e) {
+            console.error('[RegisterScreen] Google Error:', e);
+            setError(e.message || 'Google sign-up failed.');
+        } finally {
+            setGoogleLoading(false);
         }
     };
 
@@ -96,10 +180,7 @@ const RegisterScreen = ({ navigation, route }) => {
             <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
                 <View style={styles.content}>
                     <Animated.View style={[styles.header, titleStyle]}>
-                        <BrandMark
-                            size={40}
-                            subtitle="create account"
-                        />
+                        <BrandMark size={40} subtitle="create account" />
                     </Animated.View>
 
                     {/* Role Toggle */}
@@ -109,135 +190,133 @@ const RegisterScreen = ({ navigation, route }) => {
                                 style={[styles.roleButton, role === 'user' && styles.roleButtonActive]}
                                 onPress={() => setRole('user')}
                             >
+                                <IconButton icon={bi('account')} size={18} iconColor={role === 'user' ? '#000' : '#888'} style={{ margin: 0 }} />
                                 <Text style={[styles.roleText, role === 'user' && styles.roleTextActive]}>Customer</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.roleButton, role === 'biker' && styles.roleButtonActive]}
                                 onPress={() => setRole('biker')}
                             >
+                                <IconButton icon={bi('motorbike')} size={18} iconColor={role === 'biker' ? '#000' : '#888'} style={{ margin: 0 }} />
                                 <Text style={[styles.roleText, role === 'biker' && styles.roleTextActive]}>Biker</Text>
                             </TouchableOpacity>
                         </View>
                     </Animated.View>
 
+                    {/* Manual Form */}
                     <Animated.View entering={FadeInDown.delay(200).duration(800)}>
                         <Surface style={styles.surface} elevation={0}>
-                            <CustomInput
+                            <View style={styles.infoCard}>
+                                <Text style={styles.infoTitle}>
+                                    {role === 'biker' ? 'Register as a Biker' : 'Create Your Account'}
+                                </Text>
+                            </View>
+
+                            {error ? (
+                                <View style={styles.errorBox}>
+                                    <IconButton icon={bi('alert-circle')} size={18} iconColor="#ff6b6b" style={{ margin: 0 }} />
+                                    <Text style={styles.errorText}>{error}</Text>
+                                </View>
+                            ) : null}
+
+                            <TextInput
                                 label="Full Name"
                                 value={name}
                                 onChangeText={setName}
+                                mode="outlined"
+                                autoCapitalize="words"
+                                left={<TextInput.Icon icon={bi('account')} />}
                                 style={styles.input}
-                                textColor="#FFFFFF"
+                                outlineColor="rgba(255,255,255,0.1)"
+                                activeOutlineColor="#00FD3F"
+                                theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
-                            <CustomInput
+                            <TextInput
                                 label="Email"
                                 value={email}
-                                onChangeText={(text) => { setEmail(text); setError(''); }}
+                                onChangeText={setEmail}
+                                mode="outlined"
                                 keyboardType="email-address"
                                 autoCapitalize="none"
-                                placeholder="your@email.com"
+                                left={<TextInput.Icon icon={bi('mail')} />}
                                 style={styles.input}
-                                textColor="#FFFFFF"
+                                outlineColor="rgba(255,255,255,0.1)"
+                                activeOutlineColor="#00FD3F"
+                                theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
-                            <CustomInput
+                            <TextInput
                                 label="Password"
                                 value={password}
-                                onChangeText={(text) => { setPassword(text); setError(''); }}
-                                secureTextEntry
-                                placeholder="Min. 8 characters"
+                                onChangeText={setPassword}
+                                mode="outlined"
+                                secureTextEntry={secureText}
+                                left={<TextInput.Icon icon={bi('lock')} />}
+                                right={<TextInput.Icon icon={bi(secureText ? 'eye-off' : 'eye')} onPress={() => setSecureText(!secureText)} forceTextInputFocus={false} />}
                                 style={styles.input}
-                                textColor="#FFFFFF"
+                                outlineColor="rgba(255,255,255,0.1)"
+                                activeOutlineColor="#00FD3F"
+                                theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
-                            {role === 'user' && (
-                                <Animated.View entering={FadeInDown}>
-                                    <View style={styles.phoneRow}>
-                                        <TouchableOpacity
-                                            style={styles.countryTrigger}
-                                            onPress={() => setShowCountryPicker(true)}
-                                        >
-                                            <Text style={styles.countryCodeText}>{callingCode}</Text>
-                                        </TouchableOpacity>
-                                        <CustomInput
-                                            label="Phone Number"
-                                            value={phone}
-                                            onChangeText={setPhone}
-                                            keyboardType="phone-pad"
-                                            placeholder="771 234 567"
-                                            containerStyle={{ flex: 1 }}
-                                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                            textColor="#FFFFFF"
-                                        />
-                                    </View>
-                                    <View style={styles.row}>
-                                        <CustomInput
-                                            label="City"
-                                            value={city}
-                                            onChangeText={setCity}
-                                            placeholder="Harare"
-                                            style={[styles.input, { flex: 1, marginRight: 8 }]}
-                                            textColor="#FFFFFF"
-                                        />
-                                        <CustomInput
-                                            label="Country"
-                                            value={country}
-                                            onChangeText={setCountry}
-                                            editable={false}
-                                            placeholder="Country"
-                                            style={[styles.input, { flex: 1 }]}
-                                            textColor="#888"
-                                        />
-                                    </View>
-                                </Animated.View>
-                            )}
+                            <TouchableOpacity
+                                style={styles.registerButton}
+                                onPress={handleRegister}
+                                disabled={loading || googleLoading}
+                                activeOpacity={0.8}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator size="small" color="#000" />
+                                ) : (
+                                    <Text style={styles.registerButtonText}>
+                                        {role === 'biker' ? 'Next: Vehicle Details' : 'Create Account'}
+                                    </Text>
+                                )}
+                            </TouchableOpacity>
 
-                            {error ? (
-                                <Text style={styles.errorText}>{error}</Text>
-                            ) : null}
+                            <View style={styles.dividerContainer}>
+                                <View style={styles.divider} />
+                                <Text style={styles.dividerText}>OR</Text>
+                                <View style={styles.divider} />
+                            </View>
 
-                            <CustomButton
-                                title={role === 'biker' ? "continue to biker profile" : "create account"}
-                                onPress={() => {
-                                    if (role === 'biker') {
-                                        if (!name || !email || !password) {
-                                            setError('Please complete basic info first');
-                                            return;
-                                        }
-                                        navigation.navigate('BikerDetails', { name, email, password });
-                                    } else {
-                                        handleRegister();
-                                    }
-                                }}
-                                loading={loading}
-                                disabled={loading}
-                                style={styles.button}
-                                labelStyle={styles.buttonLabel}
-                            />
+                            <TouchableOpacity
+                                style={styles.googleButton}
+                                onPress={handleGoogleSignUp}
+                                disabled={loading || googleLoading}
+                                activeOpacity={0.8}
+                            >
+                                {googleLoading ? (
+                                    <ActivityIndicator size="small" color="#000" />
+                                ) : (
+                                    <>
+                                        <IconButton icon={bi('google')} size={18} iconColor="#FFF" style={{ margin: 0 }} />
+                                        <Text style={styles.googleButtonText}>
+                                            {role === 'biker' ? 'Sign up with Google' : 'Sign up with Google'}
+                                        </Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
                         </Surface>
                     </Animated.View>
 
-                    <Animated.View entering={FadeInUp.delay(400).duration(800)} style={styles.footer}>
+                    <Animated.View entering={FadeInUp.delay(300).duration(800)} style={styles.footer}>
                         <Text style={styles.footerText}>
                             Already have an account?{" "}
                             <Text style={styles.link} onPress={() => navigation.navigate('Login')}>
                                 Sign In
                             </Text>
                         </Text>
+                        <Text style={[styles.footerText, { marginTop: 16, fontSize: 12, textAlign: 'center' }]}>
+                            By continuing, you agree to our{' '}
+                            <Text style={styles.link}>Terms of Service</Text>
+                            {' '}and{' '}
+                            <Text style={styles.link}>Privacy Policy</Text>
+                        </Text>
                     </Animated.View>
                 </View>
             </ScrollView>
-
-            <CountryPicker
-                visible={showCountryPicker}
-                onDismiss={() => setShowCountryPicker(false)}
-                onSelect={(val) => {
-                    setCountry(val.name);
-                    setCountryCode(val.code);
-                    setCallingCode(val.callingCode);
-                }}
-            />
         </KeyboardAvoidingView>
     );
 };
@@ -245,58 +324,55 @@ const RegisterScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     scrollContent: { flexGrow: 1 },
-    content: { flex: 1, padding: 24, paddingVertical: 40 },
-    header: { marginBottom: 32, alignItems: 'center' },
-    headerTitle: { color: '#888', marginTop: 8, fontSize: 16 },
+    content: { flex: 1, padding: 24, paddingVertical: 40, justifyContent: 'center' },
+    header: { marginBottom: 24, alignItems: 'center' },
     roleContainer: {
-        flexDirection: 'row', justifyContent: 'center', marginBottom: 24, gap: 12,
+        flexDirection: 'row', justifyContent: 'center', marginBottom: 20, gap: 12,
     },
     roleButton: {
-        paddingHorizontal: 28, paddingVertical: 12, borderRadius: 25, borderWidth: 1, borderColor: '#333',
-        backgroundColor: 'rgba(255,255,255,0.02)',
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 20, paddingVertical: 10, borderRadius: 25,
+        borderWidth: 1, borderColor: '#333', backgroundColor: 'rgba(255,255,255,0.02)', gap: 4,
     },
     roleButtonActive: {
         backgroundColor: '#00FD3F', borderColor: '#00FD3F',
         shadowColor: '#00FD3F', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
     },
-    roleText: { color: '#888', fontWeight: 'normal' },
-    roleTextActive: { color: '#000' },
-    surface: { borderRadius: 24, padding: 24, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-    input: { marginBottom: 12, backgroundColor: 'transparent' },
-    phoneRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-    countryTrigger: {
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        height: 56,
-        paddingHorizontal: 16,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 8,
-        marginTop: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+    roleText: { color: '#888', fontWeight: 'normal', fontSize: 13 },
+    roleTextActive: { color: '#000', fontWeight: '600', fontSize: 13 },
+    surface: {
+        borderRadius: 20, padding: 20, backgroundColor: 'rgba(255,255,255,0.03)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
     },
-    countryCodeText: { color: '#00FD3F', fontWeight: 'bold', fontSize: 16 },
-    row: { flexDirection: 'row', marginBottom: 0 },
-    bikerSection: { marginTop: 8 },
-    planSection: { marginTop: 16, marginBottom: 16 },
-    planLabel: { color: '#555', fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 12, marginLeft: 4 },
-    planGrid: { flexDirection: 'row', gap: 10 },
-    planItem: {
-        flex: 1, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: '#333',
-        alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.01)'
+    infoCard: { alignItems: 'center', marginBottom: 20 },
+    infoTitle: { fontSize: 20, fontWeight: 'bold', color: '#FFF', textAlign: 'center' },
+    errorBox: {
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: 'rgba(255,107,107,0.1)', borderRadius: 10, padding: 10, marginBottom: 16, gap: 8,
     },
-    planItemActive: { backgroundColor: '#00FD3F', borderColor: '#00FD3F' },
-    planItemText: { color: '#888', fontSize: 12, fontWeight: 'normal' },
-    planItemTextActive: { color: '#000' },
-    planItemPrice: { color: '#555', fontSize: 10, marginTop: 2 },
-    planItemPriceActive: { color: '#000' },
-    errorText: { color: '#ff6b6b', textAlign: 'center', marginBottom: 16, fontSize: 13 },
-    button: { height: 56, borderRadius: 16, backgroundColor: '#00FD3F', justifyContent: 'center', marginTop: 12 },
-    buttonLabel: { color: '#000', fontSize: 18, fontWeight: 'normal' },
-    footer: { marginTop: 32, marginBottom: 20, alignItems: 'center' },
-    footerText: { color: '#888', fontSize: 15 },
-    link: { color: '#00FD3F', fontWeight: 'normal' },
+    errorText: { color: '#ff6b6b', fontSize: 12, flex: 1 },
+    input: {
+        marginBottom: 16, height: 50, fontSize: 14,
+    },
+    registerButton: {
+        backgroundColor: '#00FD3F', borderRadius: 12, height: 48,
+        alignItems: 'center', justifyContent: 'center', marginTop: 8,
+    },
+    registerButtonText: { color: '#000', fontSize: 15, fontWeight: 'bold' },
+    dividerContainer: {
+        flexDirection: 'row', alignItems: 'center', marginVertical: 20,
+    },
+    divider: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)' },
+    dividerText: { marginHorizontal: 12, color: '#666', fontSize: 12 },
+    googleButton: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: '#1A1A1A', borderRadius: 12, height: 48, gap: 6,
+        borderWidth: 1, borderColor: '#333',
+    },
+    googleButtonText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+    footer: { marginTop: 24, marginBottom: 20, alignItems: 'center' },
+    footerText: { color: '#888', fontSize: 14 },
+    link: { color: '#00FD3F', fontWeight: '600' },
 });
 
 export default RegisterScreen;

@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { useNavigation, useRoute, DrawerActions, useFocusEffect } from '@react-navigation/native';
 import SheetService from '../api/SheetService';
+import AppSecurity from '../utils/AppSecurity';
 import { bi } from '../components/AppIcon';
 import mapStyle from '../theme/mapStyle.json';
 
@@ -627,12 +628,18 @@ const HomeScreen = () => {
             });
 
             socket.off('order_status_update');
-            socket.on('order_status_update', (data) => {
+            socket.on('order_status_update', async (data) => {
                 if (data?.orderId !== orderId) return;
                 setActiveOrder(prev => prev ? { ...prev, status: data.status } : prev);
                 if (data.status === 'completed') {
                     const completedBiker = data.biker || {};
                     const completedOrderId = data.orderId;
+                    // Persist pending rating so user can't bypass it
+                    await AppSecurity.setPendingRating(
+                        completedOrderId,
+                        completedBiker.id,
+                        completedBiker.name || 'Your Biker'
+                    );
                     setActiveOrder(null);
                     setSelectedRoute(null);
                     setIsTracking(false);

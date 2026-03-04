@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import SheetService from '../api/SheetService';
+import AppSecurity from '../utils/AppSecurity';
 import Animated, {
     useSharedValue,
     useAnimatedStyle,
@@ -52,11 +53,43 @@ const SplashScreen = ({ navigation }) => {
 
         const timer = setTimeout(startAnimations, START_DELAY);
 
-        // Session check
+        // Session check with security enhancements
         const check = async () => {
             await new Promise(r => setTimeout(r, 3500));
+
+            // Run app integrity check
+            AppSecurity.integrityCheck();
+
             const user = await SheetService.loadSession();
-            user ? goToApp(user) : navigation.replace('RoleSelection');
+
+            if (user) {
+                // Start security session tracking
+                await AppSecurity.startSession();
+
+                // Check for pending rating (mandatory before using app)
+                const pendingRating = await AppSecurity.getPendingRating();
+                if (pendingRating) {
+                    navigation.replace('Rating', {
+                        bikerId: pendingRating.bikerId,
+                        bikerName: pendingRating.bikerName,
+                        orderId: pendingRating.orderId,
+                    });
+                    return;
+                }
+
+                // Check session validity
+                const sessionCheck = await AppSecurity.isSessionValid();
+                if (!sessionCheck.valid) {
+                    // Session expired – force re-login
+                    await SheetService.logout();
+                    navigation.replace('RoleSelection');
+                    return;
+                }
+
+                goToApp(user);
+            } else {
+                navigation.replace('RoleSelection');
+            }
         };
         check();
 

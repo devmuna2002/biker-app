@@ -56,8 +56,20 @@ export class SupportController {
      * Submit feedback/rating for a trip.
      */
     @Post('feedback')
-    submitFeedback(@Body() body: { userId: number; orderId: number; rating: number; comment?: string }) {
-        console.log(`⭐ Feedback from user ${body.userId} for order ${body.orderId}: ${body.rating}/5 – ${body.comment || ''}`);
+    submitFeedback(@Body() body: {
+        userId: number;
+        orderId: number;
+        rating: number;
+        comment?: string;
+        tags?: string[];
+        tipCents?: number;
+    }) {
+        console.log(`⭐ Feedback from user ${body.userId} for order ${body.orderId}: ${body.rating}/5`);
+        if (body.comment) console.log(`   Comment: ${body.comment}`);
+        if (body.tags?.length) console.log(`   Tags: ${body.tags.join(', ')}`);
+        if (body.tipCents) console.log(`   Tip: $${(body.tipCents / 100).toFixed(2)}`);
+        // TODO: Save to trips table (customer_rating, customer_review)
+        // TODO: Update driver's average rating in users table
         return { success: true, message: 'Thank you for your feedback!' };
     }
 }

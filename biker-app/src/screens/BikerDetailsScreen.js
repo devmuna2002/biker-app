@@ -9,7 +9,7 @@ import BrandMark from '../components/BrandMark';
 import CountryPicker from '../components/CountryPicker';
 
 const BikerDetailsScreen = ({ navigation, route }) => {
-    const { name, email, password } = route.params;
+    const { name, email, password, provider, providerId, photo } = route.params;
     const theme = useTheme();
 
     const [phone, setPhone] = useState('');
@@ -46,20 +46,39 @@ const BikerDetailsScreen = ({ navigation, route }) => {
                 return;
             }
 
-            // Direct registration bypassing OTP Verification
-            const res = await SheetService.registerUser({
-                email,
-                name,
-                password,
-                phone: fullPhone,
-                role: 'biker',
-                vehicleNumber,
-                vehicleType: 'bike',
-                vehicleDetails: `License: ${licenseNumber}`,
-                city,
-                country,
-                countryCode,
-            });
+            let res;
+            if (provider) {
+                // Provider auth registration for bikers
+                res = await SheetService.providerAuth({
+                    email,
+                    name,
+                    provider,
+                    providerId,
+                    role: 'biker',
+                    photo,
+                    vehicleDetails: `License: ${licenseNumber}`,
+                    vehicleNumber,
+                    phone: fullPhone,
+                    city,
+                    country,
+                    countryCode
+                });
+            } else {
+                // Direct manual registration
+                res = await SheetService.registerUser({
+                    email,
+                    name,
+                    password,
+                    phone: fullPhone,
+                    role: 'biker',
+                    vehicleNumber,
+                    vehicleType: 'bike',
+                    vehicleDetails: `License: ${licenseNumber}`,
+                    city,
+                    country,
+                    countryCode,
+                });
+            }
 
             if (res.success) {
                 navigation.replace('BikerApp');

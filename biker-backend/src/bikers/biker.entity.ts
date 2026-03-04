@@ -12,11 +12,11 @@ export class Biker {
     @PrimaryGeneratedColumn()
     id: number;
 
-    @OneToOne(() => User)
+    @OneToOne(() => User, user => user.biker)
     @JoinColumn()
     user: User;
 
-    @Column()
+    @Column({ nullable: true })
     vehicleDetails: string;
 
     @Column({

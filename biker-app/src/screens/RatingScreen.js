@@ -4,6 +4,7 @@ import { Text, Surface, Button, Avatar, IconButton, useTheme } from 'react-nativ
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { bi } from '../components/AppIcon';
 import SheetService from '../api/SheetService';
+import AppSecurity from '../utils/AppSecurity';
 import Animated, { FadeInDown, FadeInUp, BounceIn } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -97,6 +98,8 @@ const RatingScreen = () => {
             });
 
             setSubmitted(true);
+            // Clear pending rating flag
+            await AppSecurity.clearPendingRating();
 
             // Auto-navigate after short delay
             setTimeout(() => {

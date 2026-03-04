@@ -534,9 +534,19 @@ const BikerHomeScreen = () => {
             await SheetService.updateDriverOrderStatus(activeJob.orderId, next);
             const res = await SheetService.getDriverActiveOrder();
             const o = res?.data?.order;
-            if (!o) {
+            if (!o || next === 'completed') {
+                const completedJob = { ...activeJob };
                 setActiveJob(null);
                 setRouteCoords([]);
+                // If completed, navigate to mandatory rating
+                if (next === 'completed') {
+                    navigation.navigate('Rating', {
+                        bikerId: completedJob.customerContact?.id || null,
+                        bikerName: completedJob.customerName || 'Customer',
+                        bikerPhoto: null,
+                        orderId: completedJob.orderId,
+                    });
+                }
             }
         } catch (e) {
             Alert.alert('Failed', e?.message || 'Status update failed');

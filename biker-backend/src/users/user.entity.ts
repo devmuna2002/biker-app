@@ -1,4 +1,5 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, UpdateDateColumn, Unique } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, UpdateDateColumn, Unique, OneToOne } from 'typeorm';
+import { Biker } from '../bikers/biker.entity';
 
 export enum UserRole {
     CUSTOMER = 'customer',
@@ -11,6 +12,9 @@ export enum UserRole {
 export class User {
     @PrimaryGeneratedColumn()
     id: number;
+
+    @OneToOne(() => Biker, biker => biker.user)
+    biker: Biker;
 
     @Column()
     name: string;

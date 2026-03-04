@@ -3,7 +3,7 @@
     "name": "Biker",
     "slug": "biker-app",
     "version": "1.0.0",
-    "scheme": "biker",
+    "scheme": "bikerapp",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -44,7 +44,8 @@
           "merchantIdentifier": "merchant.biker.app",
           "enableGooglePay": true
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

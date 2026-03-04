@@ -5,6 +5,7 @@ import { Avatar, Text, IconButton, Divider, useTheme } from 'react-native-paper'
 import { LinearGradient } from 'expo-linear-gradient';
 import SheetService from '../api/SheetService';
 import { bi } from './AppIcon';
+import AppSecurity from '../utils/AppSecurity';
 
 const CustomDrawerContent = (props) => {
     const theme = useTheme();
@@ -150,6 +151,7 @@ const CustomDrawerContent = (props) => {
                     label="Logout"
                     icon={({ color, size }) => <IconButton icon={bi('logout')} size={20} iconColor={theme.colors.error} />}
                     onPress={async () => {
+                        await AppSecurity.clearSession();
                         await SheetService.logout();
                         props.navigation.reset({
                             index: 0,
