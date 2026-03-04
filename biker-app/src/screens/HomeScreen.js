@@ -153,7 +153,7 @@ const HomeScreen = () => {
 
     const refreshNearby = async (coords) => {
         try {
-            const init = await SheetService.dashboardInit({ lat: coords.latitude, lng: coords.longitude, radiusKm: 5 });
+            const init = await SheetService.dashboardInit({ lat: coords.latitude, lng: coords.longitude, radiusKm: 50 });
             if (init?.success) {
                 setDashboard(init.data);
                 setDrivers(init.data.nearbyDrivers || []);
@@ -750,6 +750,10 @@ const HomeScreen = () => {
                 setSearchError('No bikers found nearby. Expanding search...');
                 searchTimerRef.current = setTimeout(async () => {
                     try {
+                        if (!pickupPoint?.lat || !pickupPoint?.lng) {
+                            setSearchingBikers(false);
+                            return;
+                        }
                         let found2 = [];
                         if (SheetService.getNearbyBikers) {
                             const res2 = await SheetService.getNearbyBikers({
@@ -1438,15 +1442,15 @@ const HomeScreen = () => {
                     <View style={styles.searchBarRow}>
                         <IconButton
                             icon={bi('magnify')}
-                            size={22}
-                            iconColor={searchFocused ? '#00FD3F' : '#BDC3C7'}
-                            style={{ margin: 0, marginLeft: 4 }}
+                            size={24}
+                            iconColor="#00FD3F"
+                            style={{ margin: 0, marginLeft: 8 }}
                         />
                         <TextInput
                             ref={searchInputRef}
                             style={styles.searchInput}
                             placeholder="Where to go?"
-                            placeholderTextColor="rgba(255,255,255,0.35)"
+                            placeholderTextColor="rgba(255,255,255,0.85)"
                             value={searchQuery}
                             onChangeText={handleSearchInput}
                             onFocus={() => setSearchFocused(true)}
@@ -1558,16 +1562,17 @@ const HomeScreen = () => {
                                     <View style={styles.activeOrderActions}>
                                         <TouchableOpacity
                                             style={[styles.commBtn, { backgroundColor: '#3498DB', marginBottom: 8 }]}
-                                            onPress={() => navigation.navigate('Chat', {
-                                                orderId: activeOrder.id,
-                                                recipientName: activeOrder.biker?.name || 'Driver',
-                                                recipientRole: 'driver',
-                                                recipientPhone: activeOrder.biker?.phone,
-                                                recipientId: activeOrder.biker?.id,
-                                            })}
+                                            onPress={() => {
+                                                const phone = activeOrder.biker?.phone;
+                                                if (phone) {
+                                                    Linking.openURL(`tel:${phone}`).catch(() => Alert.alert('Error', 'Could not open dialer'));
+                                                } else {
+                                                    Alert.alert('No Number', 'Driver phone number not available');
+                                                }
+                                            }}
                                         >
-                                            <IconButton icon={bi('chat')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
-                                            <Text style={styles.commBtnText}>Chat</Text>
+                                            <IconButton icon={bi('phone')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
+                                            <Text style={styles.commBtnText}>Call</Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[styles.commBtn, { backgroundColor: '#E74C3C' }]}
@@ -2004,66 +2009,68 @@ const HomeScreen = () => {
                     onDismiss={dismissWelcome}
                     contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
                 >
-                    <LinearGradient
-                        colors={[theme.colors.primary, theme.colors.secondary]}
-                        style={styles.modalHeader}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                    >
-                        <IconButton icon={bi('star')} iconColor="#000" size={30} />
-                        <Text style={styles.modalTitle}>Welcome to Biker!</Text>
-                    </LinearGradient>
+                    <View style={{ overflow: 'hidden', borderRadius: 24, paddingBottom: 10 }}>
+                        <LinearGradient
+                            colors={[theme.colors.primary, theme.colors.secondary]}
+                            style={styles.modalHeader}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                        >
+                            <IconButton icon={bi('star')} iconColor="#000" size={30} />
+                            <Text style={styles.modalTitle}>Welcome to Biker!</Text>
+                        </LinearGradient>
 
-                    <ScrollView style={{ maxHeight: 400, padding: 20 }}>
-                        <Text style={styles.welcomeSubtitle}>Quick Guide for Users</Text>
+                        <ScrollView style={{ maxHeight: 400, padding: 20 }}>
+                            <Text style={styles.welcomeSubtitle}>Quick Guide for Users</Text>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('map-marker-radius')} iconColor={theme.colors.primary} size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>Book a Ride</Text>
-                                <Text style={styles.tipDesc}>Enter destination or tap anywhere on the map to pin a drop-off point instantly.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('map-marker-radius')} iconColor={theme.colors.primary} size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>Book a Ride</Text>
+                                    <Text style={styles.tipDesc}>Enter destination or tap anywhere on the map to pin a drop-off point instantly.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('package-variant')} iconColor={theme.colors.primary} size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>Send a Package & Local Services</Text>
-                                <Text style={styles.tipDesc}>Switch to 'Send a Package' to deliver parcels, or use 'Local Services' to browse nearby shops, food, pharmacies, and more.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('package-variant')} iconColor={theme.colors.primary} size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>Send a Package & Local Services</Text>
+                                    <Text style={styles.tipDesc}>Switch to 'Send a Package' to deliver parcels, or use 'Local Services' to browse nearby shops, food, pharmacies, and more.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('phone-in-talk')} iconColor={theme.colors.primary} size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>In-App Calling</Text>
-                                <Text style={styles.tipDesc}>Once a biker accepts your job, call them directly for free through our secure system.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('phone-in-talk')} iconColor={theme.colors.primary} size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>In-App Calling</Text>
+                                    <Text style={styles.tipDesc}>Once a biker accepts your job, call them directly for free through our secure system.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('shield-check')} iconColor={theme.colors.primary} size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>Security First</Text>
-                                <Text style={styles.tipDesc}>Your account history is private. You can wipe all your data at any time in Profile Settings.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('shield-check')} iconColor={theme.colors.primary} size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>Security First</Text>
+                                    <Text style={styles.tipDesc}>Your account history is private. You can wipe all your data at any time in Profile Settings.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <Divider style={{ marginVertical: 15 }} />
-                        <Text style={{ textAlign: 'center', opacity: 0.6, fontSize: 12, marginBottom: 20 }}>
-                            By dismissng this, you agree to our Terms of Service.
-                        </Text>
-                    </ScrollView>
+                            <Divider style={{ marginVertical: 15 }} />
+                            <Text style={{ textAlign: 'center', opacity: 0.6, fontSize: 12, marginBottom: 20 }}>
+                                By dismissng this, you agree to our Terms of Service.
+                            </Text>
+                        </ScrollView>
 
-                    <Button
-                        mode="contained"
-                        onPress={dismissWelcome}
-                        style={styles.modalBtn}
-                        buttonColor={theme.colors.primary}
-                        textColor="#000"
-                    >
-                        Got it!
-                    </Button>
+                        <Button
+                            mode="contained"
+                            onPress={dismissWelcome}
+                            style={styles.modalBtn}
+                            buttonColor={theme.colors.primary}
+                            textColor="#000"
+                        >
+                            Got it!
+                        </Button>
+                    </View>
                 </Modal>
             </Portal>
         </View>
@@ -2426,7 +2433,6 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#2C2C2C',
         marginBottom: 10,
-        overflow: 'hidden',
         zIndex: 2,
     },
     dropdownItem: {
@@ -2872,8 +2878,6 @@ const styles = StyleSheet.create({
     modalContent: {
         margin: 20,
         borderRadius: 24,
-        overflow: 'hidden',
-        paddingBottom: 10,
     },
     modalHeader: {
         flexDirection: 'row',
@@ -2919,29 +2923,35 @@ const styles = StyleSheet.create({
         left: 16,
         right: 16,
         zIndex: 500,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 10,
     },
     searchBarSurface: {
-        borderRadius: 18,
-        backgroundColor: 'rgba(18, 18, 18, 0.97)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.07)',
-        overflow: 'hidden',
+        borderRadius: 24,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        borderWidth: 1.5,
+        borderColor: '#00FD3F',
     },
     searchBarSurfaceFocused: {
         borderColor: '#00FD3F',
-        borderWidth: 1.5,
+        borderWidth: 2,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
     },
     searchBarRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        height: 52,
+        height: 60,
     },
     searchInput: {
         flex: 1,
         color: '#FFFFFF',
-        fontSize: 15,
-        fontWeight: '500',
+        fontSize: 16,
+        fontWeight: 'bold',
         paddingVertical: 0,
+        letterSpacing: 0.5,
     },
     suggestionsContainer: {
         borderTopWidth: 1,

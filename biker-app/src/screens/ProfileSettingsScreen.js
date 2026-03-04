@@ -25,6 +25,12 @@ const ProfileSettingsScreen = ({ navigation }) => {
     const [countryCode, setCountryCode] = useState(user.countryCode || '');
     const [licensePhoto, setLicensePhoto] = useState(user.licenseVerificationPhoto || '');
     const [verificationStatus, setVerificationStatus] = useState(user.verificationStatus || 'pending');
+
+    // Payment Preferences
+    const [paymentMethodPreference, setPaymentMethodPreference] = useState(user.paymentMethodPreference || 'mobile_money');
+    const [mobileMoneyNumber, setMobileMoneyNumber] = useState(user.mobileMoneyNumber || '');
+    const [paypalEmail, setPaypalEmail] = useState(user.paypalEmail || '');
+
     const [subscription, setSubscription] = useState(null);
     const [subLoading, setSubLoading] = useState(false);
     const initialServiceArea = user?.serviceArea && user.serviceArea.lat != null && user.serviceArea.lng != null
@@ -278,6 +284,9 @@ const ProfileSettingsScreen = ({ navigation }) => {
                 serviceAreaLng: serviceAreaCenter?.lng != null ? Number(serviceAreaCenter.lng) : undefined,
                 serviceAreaRadiusKm: serviceAreaCenter ? Number(serviceAreaRadiusKm) : undefined,
                 licenseVerificationPhoto: licensePhoto || undefined,
+                paymentMethodPreference: isDriver ? (paymentMethodPreference || undefined) : undefined,
+                mobileMoneyNumber: isDriver ? (mobileMoneyNumber?.trim() || undefined) : undefined,
+                paypalEmail: isDriver ? (paypalEmail?.trim() || undefined) : undefined,
             };
 
             // Strip keys where value is undefined
@@ -413,6 +422,63 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                 >
                                     VERIFIED
                                 </Badge>
+                            </View>
+                        </View>
+                    )}
+
+                    {isDriver && (
+                        <View style={[styles.subscriptionInfo, { marginTop: 10 }]}>
+                            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Payment & Earnings</Text>
+                            <Text style={[styles.label, { marginBottom: 10, color: theme.colors.secondaryText }]}>
+                                Where should we send your payouts?
+                            </Text>
+
+                            <View style={styles.inputContainer}>
+                                <TextInput
+                                    label="Payment Method Preference"
+                                    value={paymentMethodPreference}
+                                    onChangeText={setPaymentMethodPreference}
+                                    mode="flat"
+                                    placeholder="e.g. Mobile Money, PayPal, Cash"
+                                    style={[styles.input, { backgroundColor: theme.colors.surface, color: theme.colors.text }]}
+                                    textColor={theme.colors.text}
+                                    placeholderTextColor={theme.colors.placeholder}
+                                    underlineColor="transparent"
+                                    activeUnderlineColor={theme.colors.primary}
+                                    theme={{ colors: { onSurfaceVariant: theme.colors.placeholder } }}
+                                />
+                            </View>
+
+                            <View style={styles.inputContainer}>
+                                <TextInput
+                                    label="Mobile Money Number"
+                                    value={mobileMoneyNumber}
+                                    onChangeText={setMobileMoneyNumber}
+                                    mode="flat"
+                                    keyboardType="phone-pad"
+                                    style={[styles.input, { backgroundColor: theme.colors.surface, color: theme.colors.text }]}
+                                    textColor={theme.colors.text}
+                                    placeholderTextColor={theme.colors.placeholder}
+                                    underlineColor="transparent"
+                                    activeUnderlineColor={theme.colors.primary}
+                                    theme={{ colors: { onSurfaceVariant: theme.colors.placeholder } }}
+                                />
+                            </View>
+
+                            <View style={styles.inputContainer}>
+                                <TextInput
+                                    label="PayPal Email"
+                                    value={paypalEmail}
+                                    onChangeText={setPaypalEmail}
+                                    mode="flat"
+                                    keyboardType="email-address"
+                                    style={[styles.input, { backgroundColor: theme.colors.surface, color: theme.colors.text }]}
+                                    textColor={theme.colors.text}
+                                    placeholderTextColor={theme.colors.placeholder}
+                                    underlineColor="transparent"
+                                    activeUnderlineColor={theme.colors.primary}
+                                    theme={{ colors: { onSurfaceVariant: theme.colors.placeholder } }}
+                                />
                             </View>
                         </View>
                     )}

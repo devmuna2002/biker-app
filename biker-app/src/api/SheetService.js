@@ -13,34 +13,57 @@ export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
 
 function resolveApiUrl() {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  let baseUrl = '';
+
   if (typeof envUrl === 'string' && envUrl.trim().length > 0) {
-    return envUrl.trim().replace(/\/+$/, '');
+    baseUrl = envUrl.trim().replace(/\/+$/, '');
   }
 
+  // If we're in DEV, attempt to auto-detect the host machine's IP (works for Expo Go/Dev Client)
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
     if (typeof scriptURL === 'string') {
       try {
         const u = new URL(scriptURL);
         const host = u.hostname;
-        if (host === 'localhost' && Platform.OS === 'android') return 'http://10.0.2.2:3003';
-        if (host && host !== 'localhost') return `http://${host}:3003`;
+
+        // Android Emulator specific host
+        if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
+          return 'http://10.0.2.2:3003';
+        }
+
+        if (host && host !== 'localhost' && host !== '127.0.0.1') {
+          return `http://${host}:3003`;
+        }
       } catch {
         const m = scriptURL.match(/https?:\/\/([^/:]+)(?::\d+)?\//);
         const host = m?.[1];
-        if (host === 'localhost' && Platform.OS === 'android') return 'http://10.0.2.2:3003';
-        if (host && host !== 'localhost') return `http://${host}:3003`;
+        if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
+          return 'http://10.0.2.2:3003';
+        }
+        if (host && host !== 'localhost' && host !== '127.0.0.1') {
+          return `http://${host}:3003`;
+        }
       }
     }
   }
 
-  return 'http://192.168.0.180:3003';
+  // If envUrl was set, use it. Otherwise fall back to the known machine IP or emulator host.
+  if (baseUrl) {
+    // If baseUrl is localhost/127.0.0.1 on Android, swap for 10.0.2.2
+    if (Platform.OS === 'android' && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+      return baseUrl.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+    }
+    return baseUrl;
+  }
+
+  return Platform.OS === 'android' ? 'http://10.0.2.2:3003' : 'http://192.168.1.2:3003';
 }
 
 const API_URL = resolveApiUrl();
-console.log(`[SheetService] Resolved API_URL: ${API_URL}`);
+console.log(`[SheetService] Connected to API at: ${API_URL}`);
 if (typeof __DEV__ !== 'undefined' && __DEV__) {
-  console.log(`[SheetService] Development mode detected. If backend is not reached, check firewall and IP.`);
+  console.log(`[SheetService] Development mode info: If failing on a real device, ensure it is on the same WiFi as ${API_URL}`);
 }
 
 const WS_PATH = '/ws/tracking';
@@ -52,7 +75,7 @@ const storageKeys = {
 
 const client = axios.create({
   baseURL: API_URL,
-  timeout: 30000,
+  timeout: 60000,
 });
 
 client.interceptors.request.use(async (config) => {
@@ -65,6 +88,15 @@ client.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+
+    // Log detailed failure for 'Network Error' or timeouts
+    if (error.message === 'Network Error' || error.code === 'ECONNABORTED') {
+      console.warn(`[SheetService] ${error.code || 'ERROR'}: ${error.message} when calling ${originalRequest?.url} on ${API_URL}`);
+      if (error.code === 'ECONNABORTED') {
+        console.warn('[SheetService] Request timed out after 60s - the database or network is very slow.');
+      }
+    }
+
     if (error?.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
@@ -354,10 +386,15 @@ const SheetService = {
 
   getBikerSubscriptions: async (bikerId, options) => {
     try {
+      const token = await AsyncStorage.getItem(storageKeys.token);
+      if (!token) return { success: true, data: [] };
       const res = await client.get(`/api/payments/biker/${bikerId}/subscriptions`, { ...(options || {}) });
       return res.data;
     } catch (e) {
-      console.warn('[SheetService] getBikerSubscriptions failed:', e?.message);
+      // Suppress 401 warnings from console to avoid noise when session expires
+      if (e?.response?.status !== 401) {
+        console.warn('[SheetService] getBikerSubscriptions failed:', e?.message);
+      }
       return { success: true, data: [] };
     }
   },

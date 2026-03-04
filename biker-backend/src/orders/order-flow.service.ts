@@ -173,6 +173,10 @@ export class OrderFlowService {
             if (!order || order.status !== OrderStatus.DRAFT) throw new BadRequestException('Draft changed');
 
             order.biker = biker;
+            // Also explicitly update the lat/lng in the biker object for the order
+            if (!biker.lastKnownLocation) {
+                biker.lastKnownLocation = pointFromLatLng(pickupLat, pickupLng);
+            }
             order.status = OrderStatus.ASSIGNED;
             order.finalPriceCents = order.suggestedPriceCents;
             order.finalPrice = (order.suggestedPriceCents || 0) / 100;
@@ -311,14 +315,17 @@ export class OrderFlowService {
         if (preferredIds && preferredIds.length > 0) {
             qb.andWhere('b.id IN (:...ids)', { ids: preferredIds });
         } else {
+            // Auto-assignment: only pick drivers with active subscription or trial
+            const now = new Date();
+            qb.andWhere('(b.subscriptionStatus = :sStatus OR b.trialExpiryDate >= :now)', { sStatus: 'active', now });
             qb.andWhere(
-                'ST_DWithin(b.lastKnownLocation::geography, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, :radius)',
-                { lng, lat, radius: radiusKm * 1000 },
+                'ST_DWithin(b."lastKnownLocation", ST_SetSRID(ST_MakePoint(:lng, :lat), 4326), :radiusDeg)',
+                { lng, lat, radiusDeg: radiusKm / 111.32 },
             );
         }
 
         qb.orderBy(
-            'ST_Distance(b.lastKnownLocation::geography, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)',
+            'ST_Distance(b."lastKnownLocation", ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))',
             'ASC',
         )
             .limit(1)

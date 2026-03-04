@@ -71,9 +71,10 @@ export class DriverService {
                 };
             }
 
-            // Allow going online but check for subscription/trial for availability
+            // Allow going online — availability simply means they can see and be assigned orders.
+            // Eligibility to accept them is checked at the moment of acceptance.
             const active = await this.findActiveOrderForBiker(biker.id);
-            biker.isAvailable = (hasActiveSubscription || hasActiveTrial) && !active;
+            biker.isAvailable = !active;
 
             if (!hasActiveSubscription && !hasActiveTrial) {
                 // They can go online but will be in restricted mode
@@ -81,7 +82,7 @@ export class DriverService {
                 return {
                     success: true,
                     message: 'Your free trial has expired. You can see incoming requests but cannot accept them until you subscribe.',
-                    data: { isOnline: biker.isOnline, isAvailable: false },
+                    data: { isOnline: biker.isOnline, isAvailable: biker.isAvailable },
                 };
             }
         }
@@ -120,7 +121,8 @@ export class DriverService {
         // create a tracking log entry via the tracking service
         try {
             const activeSession = await this.sessionsRepo.findOne({
-                where: { biker: { id: biker.id } as any, status: TrackingSessionStatus.ACTIVE } as any,
+                where: { order: { biker: { id: biker.id } } as any, status: TrackingSessionStatus.ACTIVE } as any,
+                relations: ['order', 'order.biker'],
             });
             if (activeSession) {
                 await this.trackingService.persistLog({
@@ -252,6 +254,10 @@ export class DriverService {
                 startedAt: new Date(),
             });
             await this.sessionsRepo.save(session);
+
+            // Set as unavailable since they now have an order
+            biker.isAvailable = false;
+            await this.bikersRepo.save(biker);
         } catch (e) {
             console.error('[DriverService] failed to create tracking session', e?.message || e);
         }

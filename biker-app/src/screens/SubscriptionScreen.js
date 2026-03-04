@@ -160,6 +160,7 @@ const SubscriptionScreen = ({ navigation }) => {
         defaultBillingDetails: {
           email: user.email || '',
         },
+        returnURL: 'bikerapp://stripe-redirect',
       });
 
       if (initError) {

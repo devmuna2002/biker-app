@@ -231,7 +231,7 @@ const BikerHomeScreen = () => {
     const loadSubscription = useCallback(async () => {
         if (!user?.id) return;
         try {
-            const res = await SheetService.getBikerSubscriptions(user.id, { timeout: 15000 });
+            const res = await SheetService.getBikerSubscriptions(user.id, { timeout: 60000 });
             if (res?.data) {
                 const subs = Array.isArray(res.data) ? res.data : res.data.subscriptions || [];
                 const now = new Date();
@@ -342,139 +342,135 @@ const BikerHomeScreen = () => {
     }, [user?.id]);
 
     // Socket + active order poll
-    useEffect(() => {
-        let interval;
-        let cancelled = false;
+    const normalizeOrder = useCallback((o) => ({
+        orderId: o.id || o.orderId,
+        status: o.status,
+        pickup: o.pickup?.address || o.pickupAddress,
+        dropoff: o.dropoff?.address || o.dropoffAddress,
+        pickupCoords: o.pickup?.coords || o.pickupCoords || { lat: o.pickupLat, lng: o.pickupLng },
+        dropoffCoords: o.dropoff?.coords || o.dropoffCoords || { lat: o.dropoffLat, lng: o.dropoffLng },
+        routePoints: o.routePoints,
+        price: `$${((o.priceCents || 0) / 100).toFixed(2)}`,
+        priceCents: o.priceCents,
+        distanceKm: o.distanceKm,
+        etaMinutes: o.etaMinutes,
+        serviceType: o.serviceType,
+        customerName: o.customer?.name || o.customerName,
+        customerPhone: o.customer?.phone || o.customerPhone,
+        notes: o.notes,
+        itemDescription: o.itemDescription || o.description,
+        providerName: o.providerName || o.pickupStoreName,
+    }), []);
 
-        const start = async () => {
+    // Socket Connection Management
+    useEffect(() => {
+        let cancelled = false;
+        const connect = async () => {
             if (!isOnline) {
-                try { socketRef.current?.disconnect(); } catch { }
-                socketRef.current = null;
-                setActiveJob(null);
-                setRouteCoords([]);
+                if (socketRef.current) {
+                    try { socketRef.current.disconnect(); } catch { }
+                    socketRef.current = null;
+                }
                 setPendingOrders([]);
                 return;
             }
 
+            if (socketRef.current?.connected) return;
+
             try {
-                socketRef.current = await SheetService.connectTrackingSocket();
+                const socket = await SheetService.connectTrackingSocket();
+                if (cancelled) {
+                    socket.disconnect();
+                    return;
+                }
+                socketRef.current = socket;
 
                 // Register with backend
-                if (SheetService.currentUser?.id) {
-                    socketRef.current.emit('register', {
-                        userId: SheetService.currentUser.id,
+                if (user?.id) {
+                    socket.emit('register', {
+                        userId: user.id,
                         userType: 'driver'
                     });
                 }
 
-                // Listen for new incoming orders — backend emits 'new_order_request' (legacy)
-                socketRef.current.on('new_order_request', (order) => {
-                    if (!cancelled) {
-                        setPendingOrders(prev => {
-                            const exists = prev.find(o => o.orderId === order.orderId || o.id === order.id);
-                            if (exists) return prev;
-                            return [...prev, normalizeOrder(order)];
-                        });
-                    }
+                // Listen for new incoming orders
+                socket.on('new_order_request', (order) => {
+                    setPendingOrders(prev => {
+                        const exists = prev.find(o => o.orderId === order.orderId || o.id === order.id);
+                        if (exists) return prev;
+                        return [...prev, normalizeOrder(order)];
+                    });
                 });
 
-                // Backend order-flow emits 'order_assigned' to user:{id} room after confirmOrder()
-                socketRef.current.on('order_assigned', (payload) => {
-                    if (!cancelled) {
-                        // payload has { order: { id, status, serviceType, pickupAddress, dropoffAddress, priceCents }, customer: { id, name, phone } }
-                        const order = payload?.order || payload;
-                        const customer = payload?.customer || {};
-                        const normalized = normalizeOrder({
-                            ...order,
-                            orderId: order.id || order.orderId,
-                            pickupAddress: order.pickupAddress,
-                            dropoffAddress: order.dropoffAddress,
-                            priceCents: order.priceCents || order.finalPriceCents,
-                            customerName: customer.name,
-                            customerPhone: customer.phone,
-                        });
-                        setPendingOrders(prev => {
-                            const exists = prev.find(o => o.orderId === normalized.orderId);
-                            if (exists) return prev;
-                            return [...prev, normalized];
-                        });
-                    }
+                // Backend order-flow emits 'order_assigned'
+                socket.on('order_assigned', (payload) => {
+                    const order = payload?.order || payload;
+                    const customer = payload?.customer || {};
+                    const normalized = normalizeOrder({
+                        ...order,
+                        orderId: order.id || order.orderId,
+                        customerName: customer.name,
+                        customerPhone: customer.phone,
+                    });
+                    setPendingOrders(prev => {
+                        const exists = prev.find(o => o.orderId === normalized.orderId);
+                        if (exists) return prev;
+                        return [...prev, normalized];
+                    });
                 });
-            } catch {
-                socketRef.current = null;
+            } catch (err) {
+                console.warn('[Socket] Connect failed:', err);
             }
-
-            const normalizeOrder = (o) => ({
-                orderId: o.id || o.orderId,
-                status: o.status,
-                pickup: o.pickup?.address || o.pickupAddress,
-                dropoff: o.dropoff?.address || o.dropoffAddress,
-                pickupCoords: o.pickup?.coords || o.pickupCoords || { lat: o.pickupLat, lng: o.pickupLng },
-                dropoffCoords: o.dropoff?.coords || o.dropoffCoords || { lat: o.dropoffLat, lng: o.dropoffLng },
-                routePoints: o.routePoints,
-                price: `$${((o.priceCents || 0) / 100).toFixed(2)}`,
-                priceCents: o.priceCents,
-                distanceKm: o.distanceKm,
-                etaMinutes: o.etaMinutes,
-                serviceType: o.serviceType,
-                customerName: o.customer?.name || o.customerName,
-                customerPhone: o.customer?.phone || o.customerPhone,
-                notes: o.notes,
-                itemDescription: o.itemDescription || o.description,
-                providerName: o.providerName || o.pickupStoreName,
-            });
-
-            const loadActive = async () => {
-                try {
-                    const res = await SheetService.getDriverActiveOrder();
-                    const o = res?.data?.order;
-                    if (!o) {
-                        setActiveJob(null);
-                        setRouteCoords([]);
-                        return;
-                    }
-                    setActiveJob(normalizeOrder(o));
-
-                    if (location?.latitude && location?.longitude) {
-                        // Use route points from customer if available
-                        if (activeJob?.routePoints && activeJob.routePoints.length > 0) {
-                            setRouteCoords(activeJob.routePoints);
-                        } else {
-                            // Fallback: Get road route from OSRM
-                            const to = o.status === 'assigned' ? o.pickup?.coords : o.dropoff?.coords;
-                            if (to?.lat && to?.lng) {
-                                try {
-                                    const url = `https://router.project-osrm.org/route/v1/driving/${location.longitude},${location.latitude};${to.lng},${to.lat}?overview=full&geometries=geojson`;
-                                    const response = await fetch(url);
-                                    const data = await response.json();
-
-                                    if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates) {
-                                        const coords = data.routes[0].geometry.coordinates;
-                                        setRouteCoords(coords.map(c => ({ latitude: c[1], longitude: c[0] })));
-                                    } else {
-                                        setRouteCoords([]);
-                                    }
-                                } catch (err) {
-                                    console.log('Route error:', err);
-                                    setRouteCoords([]);
-                                }
-                            }
-                        }
-                    }
-                } catch { }
-            };
-
-            await loadActive();
-            interval = setInterval(loadActive, 5000);
         };
 
-        start();
+        connect();
         return () => {
             cancelled = true;
-            if (interval) clearInterval(interval);
-            try { socketRef.current?.disconnect(); } catch { }
-            socketRef.current = null;
         };
+    }, [isOnline, user?.id]);
+
+    // Active order polling & Route update
+    useEffect(() => {
+        let interval;
+        if (!isOnline) {
+            setActiveJob(null);
+            setRouteCoords([]);
+            return;
+        }
+
+        const poll = async () => {
+            try {
+                const res = await SheetService.getDriverActiveOrder();
+                const o = res?.data?.order;
+                if (!o) {
+                    setActiveJob(null);
+                    setRouteCoords([]);
+                } else {
+                    const norm = normalizeOrder(o);
+                    setActiveJob(norm);
+
+                    // Update route if location changes
+                    if (location?.latitude) {
+                        const to = o.status === 'assigned' ? o.pickup?.coords : o.dropoff?.coords;
+                        if (to?.lat && to?.lng) {
+                            try {
+                                const url = `https://router.project-osrm.org/route/v1/driving/${location.longitude},${location.latitude};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+                                const resp = await fetch(url);
+                                const d = await resp.json();
+                                if (d.code === 'Ok' && d.routes?.[0]?.geometry?.coordinates) {
+                                    const c = d.routes[0].geometry.coordinates;
+                                    setRouteCoords(c.map(pt => ({ latitude: pt[1], longitude: pt[0] })));
+                                }
+                            } catch { }
+                        }
+                    }
+                }
+            } catch { }
+        };
+
+        poll();
+        interval = setInterval(poll, 6000);
+        return () => clearInterval(interval);
     }, [isOnline, location?.latitude, location?.longitude]);
 
     const toggleOnline = async () => {
@@ -500,6 +496,18 @@ const BikerHomeScreen = () => {
         setIsOnline(newState);
         try {
             const res = await SheetService.setDriverOnline(newState);
+
+            // If going online, send current location immediately to be 'activated everywhere'
+            if (newState && location?.latitude) {
+                try {
+                    await SheetService.updateDriverLocation({
+                        lat: location.latitude,
+                        lng: location.longitude,
+                        speedMps: 0,
+                    });
+                } catch { }
+            }
+
             // Handle graceful failure (no biker profile, etc.)
             if (res?.success === false) {
                 setIsOnline(!newState);
@@ -775,7 +783,7 @@ const BikerHomeScreen = () => {
             )}
 
             {/* Top Bar */}
-            <View style={styles.topBar}>
+            <View style={[styles.topBar, { top: insets.top > 0 ? insets.top + 8 : 45 }]}>
                 <Animated.View style={createPressStyle(onlineScale)}>
                     <TouchableOpacity
                         activeOpacity={1}
@@ -814,25 +822,26 @@ const BikerHomeScreen = () => {
                             styles.subBadgeDot,
                             { backgroundColor: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }
                         ]} />
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.subBadgeTitle} numberOfLines={1}>
+                        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={[styles.subBadgeTitle, { fontSize: 11 }]} numberOfLines={1}>
                                 {subscription?.subscriptionStatus === 'active'
                                     ? (subscription.subscriptionType
-                                        ? String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1) + ' Plan'
-                                        : 'Subscribed')
-                                    : (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date() ? 'Free Trial' : 'No Subscription')}
+                                        ? String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1)
+                                        : 'Active')
+                                    : (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date() ? 'Trial' : 'No Plan')}
                             </Text>
+                            <Text style={{ color: 'rgba(255,255,255,0.4)', marginHorizontal: 5, fontSize: 10 }}>•</Text>
                             <Text style={[
                                 styles.subBadgeStatus,
-                                { color: (subscription?.subscriptionStatus === 'active' || (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date())) ? '#2ECC71' : '#E74C3C' }
+                                { fontSize: 9, color: (subscription?.subscriptionStatus === 'active' || (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date())) ? '#2ECC71' : '#E74C3C' }
                             ]}>
                                 {subscription?.subscriptionStatus === 'active'
                                     ? (subscription.expiryDate
-                                        ? `Expires ${new Date(subscription.expiryDate).toLocaleDateString()}`
+                                        ? `${new Date(subscription.expiryDate).toLocaleDateString()}`
                                         : 'Active')
                                     : (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date()
-                                        ? `Ends ${new Date(user.trialExpiryDate).toLocaleDateString()}`
-                                        : 'Tap to Subscribe')}
+                                        ? `${Math.ceil((new Date(user.trialExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))}d`
+                                        : 'Off')}
                             </Text>
                         </View>
                         <IconButton icon={bi('chevron-right')} size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
@@ -1269,13 +1278,6 @@ const BikerHomeScreen = () => {
                                 </TouchableOpacity>
                             )}
 
-                            {!isCalling && (
-                                <TouchableOpacity style={styles.commBtn} onPress={handleChatCustomer}>
-                                    <IconButton icon={bi('chat')} size={22} iconColor="#3498DB" style={{ margin: 0 }} />
-                                    <Text style={styles.commBtnText}>Chat</Text>
-                                </TouchableOpacity>
-                            )}
-
                             {/* Status Progression Button */}
                             {getNextStatus(activeJob.status) && (
                                 <Button
@@ -1298,66 +1300,68 @@ const BikerHomeScreen = () => {
                     onDismiss={dismissWelcome}
                     contentContainerStyle={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
                 >
-                    <LinearGradient
-                        colors={['#2ECC71', '#27AE60']}
-                        style={styles.modalHeader}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                    >
-                        <IconButton icon={bi('motorbike')} iconColor="#000" size={30} />
-                        <Text style={styles.modalTitle}>Welcome, Biker!</Text>
-                    </LinearGradient>
+                    <View style={{ overflow: 'hidden', borderRadius: 24, paddingBottom: 10 }}>
+                        <LinearGradient
+                            colors={['#2ECC71', '#27AE60']}
+                            style={styles.modalHeader}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                        >
+                            <IconButton icon={bi('motorbike')} iconColor="#000" size={30} />
+                            <Text style={styles.modalTitle}>Welcome, Biker!</Text>
+                        </LinearGradient>
 
-                    <ScrollView style={{ maxHeight: 400, padding: 20 }}>
-                        <Text style={styles.welcomeSubtitle}>How to use Biker platform</Text>
+                        <ScrollView style={{ maxHeight: 400, padding: 20 }}>
+                            <Text style={styles.welcomeSubtitle}>How to use Biker platform</Text>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('gift')} iconColor="#2ECC71" size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>7-Day Free Trial</Text>
-                                <Text style={styles.tipDesc}>Your first 7 days are free! Start earning immediately with full access to all orders.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('gift')} iconColor="#2ECC71" size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>7-Day Free Trial</Text>
+                                    <Text style={styles.tipDesc}>Your first 7 days are free! Start earning immediately with full access to all orders.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('eye-outline')} iconColor="#2ECC71" size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>Restricted Mode</Text>
-                                <Text style={styles.tipDesc}>When your plan expires, you can still stay online to view incoming requests, but you must subscribe to accept them.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('eye-outline')} iconColor="#2ECC71" size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>Restricted Mode</Text>
+                                    <Text style={styles.tipDesc}>When your plan expires, you can still stay online to view incoming requests, but you must subscribe to accept them.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('phone-in-talk')} iconColor="#2ECC71" size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>In-App Calling</Text>
-                                <Text style={styles.tipDesc}>Once you accept a job, you can call the customer for free through the app. All calls are logged for your safety.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('phone-in-talk')} iconColor="#2ECC71" size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>In-App Calling</Text>
+                                    <Text style={styles.tipDesc}>Once you accept a job, you can call the customer for free through the app. All calls are logged for your safety.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <View style={styles.tipRow}>
-                            <IconButton icon={bi('delete-sweep')} iconColor="#2ECC71" size={24} />
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.tipTitle}>History Clearing</Text>
-                                <Text style={styles.tipDesc}>Every new subscription clears your old history for a fresh start. You can also wipe your account at any time.</Text>
+                            <View style={styles.tipRow}>
+                                <IconButton icon={bi('delete-sweep')} iconColor="#2ECC71" size={24} />
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.tipTitle}>History Clearing</Text>
+                                    <Text style={styles.tipDesc}>Every new subscription clears your old history for a fresh start. You can also wipe your account at any time.</Text>
+                                </View>
                             </View>
-                        </View>
 
-                        <Divider style={{ marginVertical: 15 }} />
-                        <Text style={{ textAlign: 'center', opacity: 0.6, fontSize: 12, marginBottom: 20 }}>
-                            Drive safe and follow all local traffic laws.
-                        </Text>
-                    </ScrollView>
+                            <Divider style={{ marginVertical: 15 }} />
+                            <Text style={{ textAlign: 'center', opacity: 0.6, fontSize: 12, marginBottom: 20 }}>
+                                Drive safe and follow all local traffic laws.
+                            </Text>
+                        </ScrollView>
 
-                    <Button
-                        mode="contained"
-                        onPress={dismissWelcome}
-                        style={styles.modalBtn}
-                        buttonColor="#2ECC71"
-                        textColor="#000"
-                    >
-                        Start Earning!
-                    </Button>
+                        <Button
+                            mode="contained"
+                            onPress={dismissWelcome}
+                            style={styles.modalBtn}
+                            buttonColor="#2ECC71"
+                            textColor="#000"
+                        >
+                            Start Earning!
+                        </Button>
+                    </View>
                 </Modal>
             </Portal>
             {/* App Locked Overlay */}
@@ -1368,35 +1372,21 @@ const BikerHomeScreen = () => {
 
                 if (!trialActive && !subActive) {
                     return (
-                        <View style={[styles.lockedOverlay, { paddingTop: insets.top }]}>
-                            <Surface style={styles.lockedCard} elevation={12}>
-                                <IconButton icon={bi('lock-alert')} size={60} iconColor="#E74C3C" />
-                                <Text style={styles.lockedTitle}>Account Restricted</Text>
-                                <Text style={styles.lockedSubtitle}>
-                                    Your 7-day free trial has ended. To continue accepting orders and earning, please subscribe to one of our plans.
-                                </Text>
-                                <Button
-                                    mode="contained"
-                                    onPress={() => navigation.navigate('Subscription')}
-                                    style={styles.lockedBtn}
-                                    buttonColor="#2ECC71"
-                                    textColor="#000"
-                                    icon={bi('credit-card')}
-                                >
-                                    View Subscription Plans
-                                </Button>
-                                <Button
-                                    mode="text"
-                                    onPress={async () => {
-                                        await SheetService.logout();
-                                        navigation.replace('Login');
-                                    }}
-                                    textColor="#7F8C8D"
-                                >
-                                    Log Out
-                                </Button>
-                            </Surface>
-                        </View>
+                        <Surface style={[styles.restrictedBanner, { top: insets.top + 100 }]} elevation={8}>
+                            <IconButton icon={bi('lock-alert')} size={20} iconColor="#E74C3C" style={{ margin: 0 }} />
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                                <Text style={styles.restrictedText}>Trial ended. Subscribe to accept orders.</Text>
+                            </View>
+                            <Button
+                                mode="text"
+                                compact
+                                textColor="#2ECC71"
+                                onPress={() => navigation.navigate('Subscription')}
+                                labelStyle={{ fontSize: 11, fontWeight: 'bold' }}
+                            >
+                                Plans
+                            </Button>
+                        </Surface>
                     );
                 }
                 return null;
@@ -1411,9 +1401,29 @@ const styles = StyleSheet.create({
     radarContainer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
     pulse: { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(168, 224, 95, 0.1)', borderWidth: 1, borderColor: 'rgba(168, 224, 95, 0.3)' },
     radarCenter: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.1)', elevation: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
-    topBar: { position: 'absolute', top: 50, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, zIndex: 10 },
-    statusPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 8, borderRadius: 25, elevation: 5 },
-    statusText: { fontSize: 16, fontWeight: 'bold', marginRight: 10 },
+    topBar: {
+        position: 'absolute',
+        top: 50,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+        gap: 8,
+        zIndex: 10
+    },
+    statusPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: 15,
+        elevation: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    statusText: { fontSize: 13, fontWeight: 'bold', marginRight: 6 },
     pendingBadgeWrapper: { position: 'relative', marginLeft: 10 },
     badge: { position: 'absolute', top: 0, right: 0, backgroundColor: '#E74C3C' },
     bottomOverlay: { position: 'absolute', bottom: 90, left: 16, right: 16, zIndex: 20 },
@@ -1523,8 +1533,6 @@ const styles = StyleSheet.create({
     modalContent: {
         margin: 20,
         borderRadius: 24,
-        overflow: 'hidden',
-        paddingBottom: 10,
     },
     modalHeader: {
         flexDirection: 'row',
@@ -1620,13 +1628,14 @@ const styles = StyleSheet.create({
     subBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(15,15,15,0.92)',
-        borderRadius: 20,
+        backgroundColor: 'rgba(25,25,25,0.95)',
+        borderRadius: 15,
         paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderWidth: 1.5,
-        elevation: 6,
-        maxWidth: 175,
+        paddingVertical: 5,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        elevation: 4,
+        maxWidth: 180,
     },
     subBadgeDot: {
         width: 8,
@@ -1642,6 +1651,25 @@ const styles = StyleSheet.create({
     },
     subBadgeStatus: {
         fontSize: 10,
+        fontWeight: '600',
+    },
+    restrictedBanner: {
+        position: 'absolute',
+        left: 20,
+        right: 20,
+        backgroundColor: '#1C1C1E',
+        borderRadius: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(231, 76, 60, 0.4)',
+        zIndex: 50,
+    },
+    restrictedText: {
+        color: '#FFF',
+        fontSize: 12,
         fontWeight: '600',
     },
     syncIndicator: {

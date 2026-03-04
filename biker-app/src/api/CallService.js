@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { Alert } from 'react-native';
 import SheetService from './SheetService';
 
-const SOCKET_URL = SheetService.resolveApiUrl ? SheetService.resolveApiUrl() : 'http://192.168.100.145:3003';
+const SOCKET_URL = SheetService.resolveApiUrl ? SheetService.resolveApiUrl() : 'http://192.168.1.2:3003';
 
 class CallService {
     static socket = null;

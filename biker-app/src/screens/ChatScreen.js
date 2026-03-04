@@ -18,9 +18,39 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
 import CallService from '../api/CallService';
 import * as ImagePicker from 'expo-image-picker';
-import { Audio } from 'expo-av';
+import { useAudioRecorder, useAudioPlayer, AudioModule, RecordingPresets } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bi } from '../components/AppIcon';
+
+const AudioMessage = ({ audioUri, mine }) => {
+  const theme = useTheme();
+  const player = useAudioPlayer(audioUri);
+
+  return (
+    <View style={styles.audioContainer}>
+      <TouchableOpacity
+        style={styles.audioPlayButton}
+        onPress={() => {
+          if (player.playing) {
+            player.pause();
+          } else {
+            player.play();
+          }
+        }}
+      >
+        <IconButton
+          icon={bi(player.playing ? 'pause' : 'play')}
+          size={20}
+          iconColor={mine ? "#000" : "#2ECC71"}
+          style={{ margin: 0 }}
+        />
+      </TouchableOpacity>
+      <Text style={[styles.audioDuration, { color: mine ? '#000' : '#FFF' }]}>
+        {player.playing ? 'Playing...' : 'Audio'}
+      </Text>
+    </View>
+  );
+};
 
 const ChatScreen = ({ route, navigation }) => {
   const theme = useTheme();
@@ -36,7 +66,7 @@ const ChatScreen = ({ route, navigation }) => {
   const [isCalling, setIsCalling] = useState(false);
   const [callState, setCallState] = useState('idle');
   const [recipientId, setRecipientId] = useState(route?.params?.recipientId);
-  const [recording, setRecording] = useState(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isRecording, setIsRecording] = useState(false);
   const [showMediaOptions, setShowMediaOptions] = useState(false);
   const socketRef = useRef(null);
@@ -318,15 +348,12 @@ const ChatScreen = ({ route, navigation }) => {
     }
 
     try {
-      await Audio.setAudioModeAsync({
+      await AudioModule.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
 
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      setRecording(recording);
+      recorder.record();
       setIsRecording(true);
     } catch (error) {
       Alert.alert('Error', 'Could not start recording');
@@ -335,13 +362,12 @@ const ChatScreen = ({ route, navigation }) => {
 
   // Stop audio recording
   const stopRecording = async () => {
-    if (!recording) return;
+    if (!recorder.isRecording) return;
 
     try {
       setIsRecording(false);
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      setRecording(null);
+      await recorder.stop();
+      const uri = recorder.uri;
 
       if (uri) {
         const message = {
@@ -468,27 +494,7 @@ const ChatScreen = ({ route, navigation }) => {
 
           {/* Audio message */}
           {msg.type === 'audio' && msg.audio && (
-            <View style={styles.audioContainer}>
-              <TouchableOpacity
-                style={styles.audioPlayButton}
-                onPress={async () => {
-                  try {
-                    const { sound } = await Audio.Sound.createAsync({ uri: msg.audio });
-                    await sound.playAsync();
-                    sound.setOnPlaybackStatusUpdate((status) => {
-                      if (status.didJustFinish) {
-                        sound.unloadAsync();
-                      }
-                    });
-                  } catch (e) {
-                    Alert.alert('Error', 'Could not play audio');
-                  }
-                }}
-              >
-                <IconButton icon={bi('play')} size={20} iconColor={mine ? "#000" : "#2ECC71"} style={{ margin: 0 }} />
-              </TouchableOpacity>
-              <Text style={[styles.audioDuration, { color: mine ? '#000' : '#FFF' }]}>Audio</Text>
-            </View>
+            <AudioMessage audioUri={msg.audio} mine={mine} />
           )}
 
           {/* Text message */}

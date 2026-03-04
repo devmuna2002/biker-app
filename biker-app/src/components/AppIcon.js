@@ -208,9 +208,19 @@ const ICON_MAP = {
     'power': 'power',
     'log-out': 'log-out',
     'log-in': 'log-in',
-    'help-circle': 'help-circle',
     'help': 'help',
     'flag': 'flag',
+    'bank': 'card',
+    'atm': 'cash',
+    'bed': 'bed',
+    'tree': 'leaf',
+    'leaf': 'leaf',
+    'dumbbell': 'fitness',
+    'fitness': 'fitness',
+    'gas-station': 'fuel',
+    'parking': 'car',
+    'road-variant': 'road',
+    'office-building': 'business',
     'cake-variant': 'gift',
     'alpha-p-circle': 'logo-paypal',
     'google': 'logo-google',
@@ -226,11 +236,17 @@ const ICON_MAP = {
     'cart-outline': 'cart-outline',
     'bag': 'bag',
     'pricetag': 'pricetag',
+    'shopping': 'cart',
+    'shop': 'storefront',
+    'market': 'storefront',
 
     // ─── Medical / Services ───────────────────────────
     'medical-bag': 'medkit',
     'medkit': 'medkit',
     'medical': 'medkit',
+    'hospital': 'medical',
+    'pharmacy': 'medical',
+    'health': 'medical',
 
     // ─── Food & Drink ────────────────────────────────
     'silverware-fork-knife': 'restaurant',
@@ -241,6 +257,8 @@ const ICON_MAP = {
     'cafe': 'cafe',
     'beer': 'beer',
     'pizza': 'pizza',
+    'food': 'restaurant',
+    'cafe': 'cafe',
 
     // ─── Buildings ────────────────────────────────────
     'church': 'business',
@@ -257,6 +275,10 @@ const ICON_MAP = {
     // ─── Arrows (for accessibility) ──────────────────
     'arrow-up': 'arrow-up',
     'arrow-down': 'arrow-down',
+    'road': 'navigate-outline',
+    'store': 'storefront',
+    'home': 'home',
+    'office': 'business',
 };
 
 /**

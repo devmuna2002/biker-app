@@ -1,151 +1,167 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
-import { Text, IconButton, Surface, useTheme, Avatar, Divider, ActivityIndicator } from 'react-native-paper';
+import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert, Dimensions } from 'react-native';
+import { Text, IconButton, Surface, useTheme, Avatar, Divider } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
 import { bi } from '../components/AppIcon';
+
+const { width } = Dimensions.get('window');
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const statusColor = (status, theme) => {
     switch (String(status).toLowerCase()) {
-        case 'completed': return theme.colors.secondary;   // green
-        case 'pending': return theme.colors.warning;     // amber
-        case 'cancelled': return theme.colors.error;       // red
+        case 'completed': return '#00FD3F';     // Vivid Green
+        case 'pending': return theme.colors.warning;
+        case 'cancelled': return '#FF4B4B';     // Vibrant Red
+        case 'in_transit': return '#3498DB';    // Vivid Blue
         default: return theme.colors.primary;
     }
 };
 
 const feeStatusColor = (status, theme) => {
     switch (String(status).toLowerCase()) {
-        case 'paid': return theme.colors.secondary;
-        case 'overdue': return theme.colors.error;
+        case 'paid': return '#00FD3F';
+        case 'overdue': return '#FF4B4B';
         default: return theme.colors.warning;
     }
 };
+
+// ─── header ───────────────────────────────────────────────────────────────
+
+const HeaderSection = ({ greeting, user, navigation, theme }) => (
+    <View style={styles.headerContainer}>
+        <View style={styles.headerLeft}>
+            <Text style={[styles.greetingText, { color: theme.colors.secondaryText }]}>{greeting}</Text>
+            <Text style={[styles.userNameText, { color: theme.colors.text }]}>{user.name || 'Driver'}</Text>
+        </View>
+        <View style={styles.headerRight}>
+            <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.headerBtnWrap}>
+                <Surface style={[styles.headerBtn, { backgroundColor: theme.colors.surface }]} elevation={2}>
+                    <IconButton icon={bi('bell-outline')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} />
+                </Surface>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.navigate('ProfileSettings')} style={styles.headerBtnWrap}>
+                {user.photo ? (
+                    <Avatar.Image size={44} source={{ uri: user.photo }} style={{ elevation: 2 }} />
+                ) : (
+                    <Avatar.Text
+                        size={44}
+                        label={(user.name || 'D')[0].toUpperCase()}
+                        backgroundColor={theme.colors.primary}
+                        color="#fff"
+                        style={{ elevation: 2 }}
+                    />
+                )}
+            </TouchableOpacity>
+        </View>
+    </View>
+);
+
+// ─── earnings banner ───────────────────────────────────────────────────────
+
+const EarningsBanner = ({ totalEarnings, totalTrips, theme }) => (
+    <Surface style={[styles.earningsBanner, { backgroundColor: theme.colors.primary }]} elevation={4}>
+        <View style={styles.earningsContent}>
+            <View>
+                <Text style={styles.earningsLabel}>Estimated Income</Text>
+                <Text style={styles.earningsValue}>
+                    ${totalEarnings.toFixed(2)}
+                </Text>
+            </View>
+            <View style={styles.earningsIconWrap}>
+                <IconButton icon={bi('cash')} size={30} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+            </View>
+        </View>
+        <Divider style={{ backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 12 }} />
+        <View style={styles.earningsFooter}>
+            <View style={styles.earningsStat}>
+                <IconButton icon={bi('motorbike')} size={16} iconColor="#FFF" style={{ margin: 0 }} />
+                <Text style={styles.earningsStatText}>{totalTrips} Total Trips</Text>
+            </View>
+        </View>
+    </Surface>
+);
 
 // ─── stat card ──────────────────────────────────────────────────────────────
 
 const StatCard = ({ icon, label, value, accentColor, theme }) => (
     <Surface style={[styles.statCard, { backgroundColor: theme.colors.surface }]} elevation={2}>
-        <View style={[styles.statIconWrap, { backgroundColor: accentColor + '20' }]}>
-            <Avatar.Icon
-                size={40}
-                icon={bi(icon)}
-                backgroundColor="transparent"
-                color={accentColor}
-                style={{ margin: 0 }}
-            />
+        <View style={styles.statTop}>
+            <View style={[styles.statIconWrap, { backgroundColor: accentColor + '20' }]}>
+                <IconButton icon={icon} size={22} iconColor={accentColor} style={{ margin: 0 }} />
+            </View>
+            <Text style={[styles.statValue, { color: theme.colors.text }]}>{value}</Text>
         </View>
-        <Text style={[styles.statValue, { color: theme.colors.text }]}>{value}</Text>
         <Text style={[styles.statLabel, { color: theme.colors.secondaryText }]}>{label}</Text>
     </Surface>
 );
 
-// ─── order row ──────────────────────────────────────────────────────────────
+// ─── list items ─────────────────────────────────────────────────────────────
 
 const OrderRow = ({ item, theme }) => {
     const color = statusColor(item.status, theme);
     return (
         <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
             <View style={styles.listCardRow}>
-                <Avatar.Icon
-                    size={36}
-                    icon={bi('package-variant-closed')}
-                    backgroundColor={theme.colors.primary + '20'}
-                    color={theme.colors.primary}
-                    style={{ margin: 0 }}
-                />
+                <View style={[styles.listIconBox, { backgroundColor: color + '15' }]}>
+                    <IconButton icon={bi('package-variant-closed')} size={24} iconColor={color} style={{ margin: 0 }} />
+                </View>
                 <View style={styles.listCardContent}>
-                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>
-                        Order #{item.id}
-                    </Text>
-                    {item.dropoffAddress ? (
-                        <Text
-                            style={[styles.listCardSub, { color: theme.colors.secondaryText }]}
-                            numberOfLines={1}
-                        >
+                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>Order #{item.id}</Text>
+                    {item.dropoffAddress && (
+                        <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]} numberOfLines={1}>
                             {item.dropoffAddress}
                         </Text>
-                    ) : null}
+                    )}
                 </View>
                 <View style={[styles.badge, { backgroundColor: color + '20' }]}>
-                    <Text style={[styles.badgeText, { color }]}>
-                        {String(item.status).toUpperCase()}
-                    </Text>
+                    <Text style={[styles.badgeText, { color }]}>{String(item.status).toUpperCase()}</Text>
                 </View>
             </View>
         </Surface>
     );
 };
-
-// ─── call row ───────────────────────────────────────────────────────────────
-
-const CallRow = ({ item, theme }) => {
-    const isMissed = String(item.type).toLowerCase() === 'missed';
-    const icon = item.type === 'incoming' ? 'phone-incoming' : item.type === 'outgoing' ? 'phone-outgoing' : 'phone-missed';
-    const iconColor = isMissed ? theme.colors.error : theme.colors.primary;
-
-    return (
-        <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
-            <View style={styles.listCardRow}>
-                <Avatar.Icon
-                    size={36}
-                    icon={bi(icon)}
-                    backgroundColor={iconColor + '20'}
-                    color={iconColor}
-                    style={{ margin: 0 }}
-                />
-                <View style={styles.listCardContent}>
-                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>
-                        {item.name || item.phoneNumber || 'Unknown'}
-                    </Text>
-                    <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>
-                        {item.phoneNumber} • {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                </View>
-                <View style={[styles.badge, { backgroundColor: (isMissed ? theme.colors.error : theme.colors.secondary) + '20' }]}>
-                    <Text style={[styles.badgeText, { color: isMissed ? theme.colors.error : theme.colors.secondary }]}>
-                        {item.duration || (isMissed ? 'MISSED' : '0:00')}
-                    </Text>
-                </View>
-            </View>
-        </Surface>
-    );
-};
-
-// ─── fee row ────────────────────────────────────────────────────────────────
 
 const FeeRow = ({ item, theme }) => {
     const color = feeStatusColor(item.feeStatus, theme);
     return (
         <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
             <View style={styles.listCardRow}>
-                <Avatar.Icon
-                    size={36}
-                    icon={bi('cash')}
-                    backgroundColor={theme.colors.secondary + '20'}
-                    color={theme.colors.secondary}
-                    style={{ margin: 0 }}
-                />
+                <View style={[styles.listIconBox, { backgroundColor: theme.colors.secondary + '15' }]}>
+                    <IconButton icon={bi('cash')} size={24} iconColor={theme.colors.secondary} style={{ margin: 0 }} />
+                </View>
                 <View style={styles.listCardContent}>
-                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>
-                        {item.description || item.feeStatus || 'Fee'}
-                    </Text>
-                    {item.feeStatus ? (
-                        <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>
-                            Status: {item.feeStatus}
-                        </Text>
-                    ) : null}
+                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>{item.description || 'Fee'}</Text>
+                    <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>Status: {item.feeStatus}</Text>
                 </View>
                 {item.amount != null && (
-                    <Text style={[styles.feeAmount, { color: theme.colors.text }]}>
-                        ${(item.amount / 100).toFixed(2)}
-                    </Text>
+                    <Text style={[styles.feeAmount, { color: theme.colors.text }]}>${(item.amount / 100).toFixed(2)}</Text>
                 )}
-                <View style={[styles.badge, { backgroundColor: color + '20', marginLeft: 8 }]}>
-                    <Text style={[styles.badgeText, { color }]}>
-                        {String(item.feeStatus || 'PENDING').toUpperCase()}
+            </View>
+        </Surface>
+    );
+};
+
+const CallRow = ({ item, theme }) => {
+    const isMissed = String(item.type).toLowerCase() === 'missed';
+    const icon = item.type === 'incoming' ? 'arrow-down' : item.type === 'outgoing' ? 'arrow-up' : 'close-circle';
+    const iconColor = isMissed ? '#FF4B4B' : theme.colors.secondary;
+    return (
+        <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface }]} elevation={1}>
+            <View style={styles.listCardRow}>
+                <View style={[styles.listIconBox, { backgroundColor: iconColor + '15' }]}>
+                    <IconButton icon={bi(icon)} size={24} iconColor={iconColor} style={{ margin: 0 }} />
+                </View>
+                <View style={styles.listCardContent}>
+                    <Text style={[styles.listCardId, { color: theme.colors.text }]}>{item.name || item.phoneNumber || 'Unknown'}</Text>
+                    <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                </View>
+                <View style={[styles.badge, { backgroundColor: iconColor + '20' }]}>
+                    <Text style={[styles.badgeText, { color: iconColor }]}>
+                        {item.duration || (isMissed ? 'MISSED' : '0:00')}
                     </Text>
                 </View>
             </View>
@@ -155,15 +171,36 @@ const FeeRow = ({ item, theme }) => {
 
 // ─── section header ─────────────────────────────────────────────────────────
 
-const SectionHeader = ({ title, count, theme }) => (
-    <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{title}</Text>
-        {count != null && (
-            <View style={[styles.countBubble, { backgroundColor: theme.colors.primary + '20' }]}>
-                <Text style={[styles.countText, { color: theme.colors.primary }]}>{count}</Text>
-            </View>
-        )}
-    </View>
+const SectionHeader = ({ title, count, actionText, onAction, theme, isToggleable, isExpanded, onToggle }) => (
+    <TouchableOpacity
+        onPress={isToggleable ? onToggle : undefined}
+        activeOpacity={isToggleable ? 0.7 : 1}
+        style={styles.sectionHeader}
+    >
+        <View style={styles.sectionHeaderLeft}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{title}</Text>
+            {count != null && (
+                <View style={[styles.countBubble, { backgroundColor: theme.colors.primary + '20' }]}>
+                    <Text style={[styles.countText, { color: theme.colors.primary }]}>{count}</Text>
+                </View>
+            )}
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {actionText && (
+                <TouchableOpacity onPress={onAction}>
+                    <Text style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 13, marginRight: isToggleable ? 8 : 0 }}>{actionText}</Text>
+                </TouchableOpacity>
+            )}
+            {isToggleable && (
+                <IconButton
+                    icon={bi(isExpanded ? 'chevron-up' : 'chevron-down')}
+                    size={20}
+                    iconColor={theme.colors.secondaryText}
+                    style={{ margin: 0, padding: 0, width: 24, height: 24 }}
+                />
+            )}
+        </View>
+    </TouchableOpacity>
 );
 
 // ─── main screen ────────────────────────────────────────────────────────────
@@ -174,242 +211,111 @@ const DashboardScreen = ({ navigation }) => {
     const [orders, setOrders] = useState([]);
     const [fees, setFees] = useState([]);
     const [calls, setCalls] = useState([]);
-    const [loading, setLoading] = useState(false); // start false to show UI immediately
     const [refreshing, setRefreshing] = useState(false);
+
+    // Dropdown toggle states
+    const [ordersExpanded, setOrdersExpanded] = useState(true);
+    const [feesExpanded, setFeesExpanded] = useState(true);
+    const [moreExpanded, setMoreExpanded] = useState(false);
 
     const user = SheetService.currentUser || {};
 
     const loadData = useCallback(async () => {
-        if (!user?.id) { setLoading(false); return; }
-
-        // Fetch each independently so they update the UI as they arrive
-        const p1 = SheetService.dashboardInit({ lat: 0, lng: 0, radiusKm: 0 }, { timeout: 8000 })
-            .then(res => setStats(res?.data?.stats || {}))
-            .catch(() => console.warn('[Dashboard] stats failed'));
-
-        const p2 = SheetService.getBikerOrders(user.id, { timeout: 8000 })
-            .then(res => {
-                // Backend might return { success: true, data: { orders: [...] } } 
-                // or sometimes { success: true, data: [...] }
-                const data = res?.data;
-                const ordersArray = Array.isArray(data) ? data : (Array.isArray(data?.orders) ? data.orders : []);
-                setOrders(ordersArray);
-            })
-            .catch(() => { console.warn('[Dashboard] orders failed'); setOrders([]); });
-
-        const p3 = SheetService.getBikerFees(user.id, { timeout: 8000 })
-            .then(res => {
-                const data = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : (Array.isArray(res?.data?.fees) ? res.data.fees : []));
-                setFees(data);
-            })
-            .catch(() => { console.warn('[Dashboard] fees failed'); setFees([]); });
-
-        const p4 = SheetService.getCallHistory(user.id, { timeout: 8000 })
-            .then(res => {
-                const data = res?.data;
-                setCalls(Array.isArray(data) ? data : []);
-            })
-            .catch(() => { console.warn('[Dashboard] calls failed'); setCalls([]); });
-
-        Promise.allSettled([p1, p2, p3, p4]).finally(() => {
-            setLoading(false);
-            setRefreshing(false);
-        });
+        if (!user?.id) return;
+        Promise.allSettled([
+            SheetService.dashboardInit({ lat: 0, lng: 0, radiusKm: 0 }, { timeout: 8000 }).then(r => setStats(r?.data?.stats || {})),
+            SheetService.getBikerOrders(user.id, { timeout: 8000 }).then(r => setOrders(Array.isArray(r?.data) ? r.data : (r?.data?.orders || []))),
+            SheetService.getBikerFees(user.id, { timeout: 8000 }).then(r => setFees(Array.isArray(r) ? r : (r?.data?.fees || []))),
+            SheetService.getCallHistory(user.id, { timeout: 8000 }).then(r => setCalls(Array.isArray(r?.data) ? r.data : []))
+        ]).finally(() => setRefreshing(false));
     }, [user?.id]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
-    const onRefresh = () => { setRefreshing(true); loadData(); };
-
-    // ── aggregate for earnings ──
+    const safeOrders = Array.isArray(orders) ? orders : [];
     const safeFees = Array.isArray(fees) ? fees : [];
     const safeCalls = Array.isArray(calls) ? calls : [];
-    const totalEarnings = safeFees
-        .filter(f => String(f.feeStatus).toLowerCase() === 'paid')
-        .reduce((sum, f) => sum + (f.amount || 0), 0);
 
-    const safeOrders = Array.isArray(orders) ? orders : [];
-    const completedOrders = safeOrders.filter(o => String(o.status).toLowerCase() === 'completed').length;
+    const completedOrdersList = safeOrders.filter(o => String(o.status).toLowerCase() === 'completed');
+    const completedOrders = completedOrdersList.length;
     const pendingOrders = safeOrders.filter(o => ['pending', 'assigned', 'picked_up', 'in_transit'].includes(String(o.status).toLowerCase())).length;
     const cancelledOrders = safeOrders.filter(o => String(o.status).toLowerCase() === 'cancelled').length;
-    const totalOrders = safeOrders.length;
 
-    // ── greeting ──
+    const totalEarnings = completedOrdersList.reduce((sum, o) => {
+        let amt = 0;
+        if (typeof o.price === 'number') amt = o.price;
+        else if (typeof o.price === 'string') amt = parseFloat(o.price.replace(/[^0-9.]/g, '')) || 0;
+        else if (typeof o.fare === 'number') amt = o.fare;
+        else if (typeof o.fare === 'string') amt = parseFloat(o.fare.replace(/[^0-9.]/g, '')) || 0;
+        return sum + amt;
+    }, 0);
     const hour = new Date().getHours();
     const greeting = hour < 12 ? 'Good morning,' : hour < 18 ? 'Good afternoon,' : 'Good evening,';
 
-    // ── flat-list data structure ──
     const sections = [
         { type: 'header' },
-        { type: 'stats' },
-        { type: 'sectionLabel', id: 'orders-label', title: 'Recent Orders', count: totalOrders },
-        ...(safeOrders.length > 0
-            ? safeOrders.slice(0, 5).map(o => ({ type: 'order', ...o, key: `order-${o.id}` }))
-            : [{ type: 'empty', id: 'no-orders', message: 'No orders yet', icon: 'package-variant-closed' }]
-        ),
-        { type: 'sectionLabel', id: 'calls-label', title: 'Call History', count: safeCalls.length },
-        ...(safeCalls.length > 0
-            ? safeCalls.slice(0, 5).map(c => ({ type: 'call', ...c, key: `call-${c.id}` }))
-            : [{ type: 'empty', id: 'no-calls', message: 'No call history', icon: 'phone' }]
-        ),
-        { type: 'sectionLabel', id: 'fees-label', title: 'Fees', count: safeFees.length },
-        ...(safeFees.length > 0
-            ? safeFees.slice(0, 5).map(f => ({ type: 'fee', ...f, key: `fee-${f.id || f.feeId}` }))
-            : [{ type: 'empty', id: 'no-fees', message: 'No fees on record', icon: 'cash-multiple' }]
-        ),
-        { type: 'accountActions' },
-        { type: 'footer' },
+        { type: 'earnings' },
+        { type: 'quickStats' },
+
+        { type: 'sectionLabel', id: 'orders-label', title: 'Recent Orders', count: safeOrders.length, isToggleable: true, isExpanded: ordersExpanded, onToggle: () => setOrdersExpanded(!ordersExpanded) },
+        ...(ordersExpanded ? (safeOrders.length ? safeOrders.slice(0, 3).map(o => ({ type: 'order', ...o, key: `o-${o.id}` })) : [{ type: 'empty', id: 'e-1', message: 'No orders yet.', icon: 'package-variant-closed' }]) : []),
+
+        { type: 'sectionLabel', id: 'fees-label', title: 'Payment History', count: safeFees.length, isToggleable: true, isExpanded: feesExpanded, onToggle: () => setFeesExpanded(!feesExpanded) },
+        ...(feesExpanded ? (safeFees.length ? safeFees.slice(0, 3).map(f => ({ type: 'fee', ...f, key: `f-${f.id || f.feeId}` })) : [{ type: 'empty', id: 'e-2', message: 'No fees processing.', icon: 'cash' }]) : []),
+
+        { type: 'sectionLabel', id: 'more-label', title: 'More Options', count: null, isToggleable: true, isExpanded: moreExpanded, onToggle: () => setMoreExpanded(!moreExpanded) },
+        ...(moreExpanded ? [{ type: 'accountActions' }] : []),
+
+        { type: 'footer' }
     ];
 
     const renderItem = ({ item }) => {
         switch (item.type) {
-            case 'header':
+            case 'header': return <HeaderSection greeting={greeting} user={user} navigation={navigation} theme={theme} />;
+            case 'earnings': return <EarningsBanner totalEarnings={totalEarnings} totalTrips={safeOrders.length} theme={theme} />;
+            case 'quickStats':
                 return (
-                    <View style={styles.headerRow}>
-                        <View>
-                            <Text style={[styles.greeting, { color: theme.colors.secondaryText }]}>{greeting}</Text>
-                            <Text style={[styles.userName, { color: theme.colors.text }]}>{user.name || 'Driver'}</Text>
-                        </View>
-                        <View style={styles.headerIcons}>
-                            {navigation && (
-                                <>
-                                    <TouchableOpacity
-                                        onPress={() => navigation.navigate('Notifications')}
-                                        style={[styles.headerIconBtn, { backgroundColor: theme.colors.surface }]}
-                                    >
-                                        <IconButton icon={bi('bell-outline')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} />
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        onPress={() => navigation.navigate('ProfileSettings')}
-                                        style={[styles.headerIconBtn, { backgroundColor: theme.colors.surface, marginLeft: 8 }]}
-                                    >
-                                        {user.photo ? (
-                                            <Avatar.Image size={36} source={{ uri: user.photo }} />
-                                        ) : (
-                                            <Avatar.Text
-                                                size={36}
-                                                label={(user.name || 'D')[0].toUpperCase()}
-                                                backgroundColor={theme.colors.primary}
-                                                color="#fff"
-                                            />
-                                        )}
-                                    </TouchableOpacity>
-                                </>
-                            )}
-                        </View>
+                    <View style={styles.statsRow}>
+                        <StatCard icon={bi('check-circle')} label="Completed" value={completedOrders} accentColor="#00FD3F" theme={theme} />
+                        <StatCard icon={bi('time')} label="Pending" value={pendingOrders} accentColor="#F39C12" theme={theme} />
+                        <StatCard icon={bi('close-circle')} label="Cancelled" value={cancelledOrders} accentColor="#FF4B4B" theme={theme} />
                     </View>
                 );
-
-            case 'stats':
-                return (
-                    <View style={styles.statsGrid}>
-                        <StatCard
-                            icon={bi('check-circle-outline')}
-                            label="Completed"
-                            value={completedOrders}
-                            accentColor={theme.colors.secondary}
-                            theme={theme}
-                        />
-                        <StatCard
-                            icon={bi('time')}
-                            label="Pending"
-                            value={pendingOrders}
-                            accentColor={theme.colors.warning}
-                            theme={theme}
-                        />
-                        <StatCard
-                            icon={bi('close-circle')}
-                            label="Cancelled"
-                            value={cancelledOrders}
-                            accentColor={theme.colors.error}
-                            theme={theme}
-                        />
-                        <StatCard
-                            icon={bi('motorbike')}
-                            label="Total Trips"
-                            value={totalOrders}
-                            accentColor={theme.colors.primary}
-                            theme={theme}
-                        />
-                        <StatCard
-                            icon={bi('cash')}
-                            label="Earnings"
-                            value={`$${(totalEarnings / 100).toFixed(0)}`}
-                            accentColor="#F1C40F"
-                            theme={theme}
-                        />
-                    </View>
-                );
-
             case 'sectionLabel':
-                return (
-                    <>
-                        <Divider style={{ backgroundColor: theme.colors.outline, marginVertical: 8 }} />
-                        <SectionHeader title={item.title} count={item.count} theme={theme} />
-                    </>
-                );
-
-            case 'order':
-                return <OrderRow item={item} theme={theme} />;
-
-            case 'call':
-                return <CallRow item={item} theme={theme} />;
-
-            case 'fee':
-                return <FeeRow item={item} theme={theme} />;
-
+                return <SectionHeader title={item.title} count={item.count} actionText={item.action} onAction={() => { }} theme={theme} isToggleable={item.isToggleable} isExpanded={item.isExpanded} onToggle={item.onToggle} />;
+            case 'order': return <OrderRow item={item} theme={theme} />;
+            case 'fee': return <FeeRow item={item} theme={theme} />;
+            case 'call': return <CallRow item={item} theme={theme} />;
             case 'empty':
                 return (
-                    <Surface style={[styles.emptyCard, { backgroundColor: theme.colors.surface }]} elevation={0}>
-                        <Avatar.Icon
-                            size={40}
-                            icon={bi(item.icon)}
-                            backgroundColor={theme.colors.outline + '30'}
-                            color={theme.colors.secondaryText}
-                            style={{ margin: 0 }}
-                        />
+                    <View style={styles.emptyWrap}>
+                        <IconButton icon={bi(item.icon)} size={32} iconColor={theme.colors.outline} />
                         <Text style={[styles.emptyText, { color: theme.colors.secondaryText }]}>{item.message}</Text>
-                    </Surface>
-                );
-
-            case 'accountActions':
-                return (
-                    <View style={styles.accountActions}>
-                        <Divider style={{ backgroundColor: theme.colors.outline, marginVertical: 8 }} />
-                        <TouchableOpacity
-                            onPress={() => {
-                                Alert.alert(
-                                    'Delete Account',
-                                    'Are you sure you want to delete your account? This action is permanent and cannot be undone.',
-                                    [
-                                        { text: 'Cancel', style: 'cancel' },
-                                        {
-                                            text: 'Delete',
-                                            style: 'destructive',
-                                            onPress: async () => {
-                                                const res = await SheetService.deleteAccount(user.id);
-                                                if (res?.success) navigation.replace('Login');
-                                            }
-                                        }
-                                    ]
-                                );
-                            }}
-                            style={[styles.deleteBtn, { borderColor: theme.colors.error }]}
-                        >
-                            <Text style={{ color: theme.colors.error, fontWeight: 'bold' }}>DELETE ACCOUNT</Text>
-                        </TouchableOpacity>
                     </View>
                 );
-
-            case 'footer':
-                return <View style={{ height: 24 }} />;
-
-            default:
-                return null;
+            case 'accountActions':
+                return (
+                    <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface, borderColor: 'rgba(255, 75, 75, 0.2)', borderWidth: 1 }]} elevation={1}>
+                        <TouchableOpacity
+                            onPress={() => Alert.alert('Delete Account', 'Are you completely sure? This action is permanent and erases all data.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete Forever', style: 'destructive', onPress: async () => { const r = await SheetService.deleteAccount(user.id); if (r?.success) navigation.replace('Login'); } }])}
+                            style={styles.listCardRow}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.listIconBox, { backgroundColor: 'rgba(255, 75, 75, 0.15)' }]}>
+                                <IconButton icon={bi('trash')} size={24} iconColor="#FF4B4B" style={{ margin: 0 }} />
+                            </View>
+                            <View style={styles.listCardContent}>
+                                <Text style={[styles.listCardId, { color: '#FF4B4B' }]}>Delete Account</Text>
+                                <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>Permanently erase your data</Text>
+                            </View>
+                            <IconButton icon={bi('chevron-right')} size={20} iconColor={theme.colors.secondaryText} style={{ margin: 0 }} />
+                        </TouchableOpacity>
+                    </Surface>
+                );
+            case 'footer': return <View style={{ height: 40 }} />;
+            default: return null;
         }
     };
-
-    // removed full screen loading indicator to keep UI snappy
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -418,183 +324,63 @@ const DashboardScreen = ({ navigation }) => {
                 keyExtractor={(item, idx) => item.key || item.id || item.type + idx}
                 renderItem={renderItem}
                 contentContainerStyle={styles.list}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={theme.colors.primary}
-                        colors={[theme.colors.primary]}
-                    />
-                }
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }} tintColor={theme.colors.primary} />}
             />
         </SafeAreaView>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-    },
-    list: {
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 32, // avoid collision with system navigation
-    },
+    container: { flex: 1 },
+    list: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 20 },
 
-    // ── header ──
-    headerRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 24,
-    },
-    greeting: {
-        fontSize: 13,
-        fontWeight: '500',
-    },
-    userName: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        marginTop: 2,
-    },
-    headerIcons: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    headerIconBtn: {
-        borderRadius: 20,
-        width: 44,
-        height: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-    },
+    headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, marginTop: 4 },
+    headerLeft: { flex: 1 },
+    greetingText: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+    userNameText: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    headerBtnWrap: {},
+    headerBtn: { borderRadius: 24, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
-    // ── stats ──
-    statsGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 12,
-        marginBottom: 8,
-    },
-    statCard: {
-        width: '47%',
-        borderRadius: 16,
-        padding: 16,
-        alignItems: 'flex-start',
-        gap: 8,
-    },
-    statIconWrap: {
-        borderRadius: 12,
-        padding: 6,
-    },
-    statValue: {
-        fontSize: 26,
-        fontWeight: 'bold',
-        marginTop: 4,
-    },
-    statLabel: {
-        fontSize: 13,
-        fontWeight: '500',
-    },
+    earningsBanner: { borderRadius: 20, padding: 20, marginBottom: 24 },
+    earningsContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    earningsLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 14, fontWeight: '600', marginBottom: 4 },
+    earningsValue: { color: '#FFF', fontSize: 38, fontWeight: '900', letterSpacing: -1 },
+    earningsIconWrap: { backgroundColor: '#FFF', borderRadius: 16, width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
+    earningsFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    earningsStat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    earningsStatText: { color: '#FFF', fontSize: 13, fontWeight: '600' },
+    earningsAction: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+    earningsActionText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
 
-    // ── section header ──
-    sectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 8,
-        marginBottom: 12,
-        gap: 8,
-    },
-    sectionTitle: {
-        fontSize: 17,
-        fontWeight: '700',
-    },
-    countBubble: {
-        borderRadius: 10,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-    },
-    countText: {
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
+    statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24, gap: 12 },
+    statCard: { flex: 1, borderRadius: 18, padding: 14 },
+    statTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+    statIconWrap: { borderRadius: 12, padding: 2 },
+    statValue: { fontSize: 22, fontWeight: '800' },
+    statLabel: { fontSize: 12, fontWeight: '600' },
 
-    // ── list cards ──
-    listCard: {
-        borderRadius: 14,
-        marginBottom: 10,
-        padding: 14,
-    },
-    listCardRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-    },
-    listCardContent: {
-        flex: 1,
-    },
-    listCardId: {
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    listCardSub: {
-        fontSize: 12,
-        marginTop: 2,
-    },
-    badge: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 8,
-    },
-    badgeText: {
-        fontSize: 10,
-        fontWeight: 'bold',
-        letterSpacing: 0.5,
-    },
-    feeAmount: {
-        fontSize: 15,
-        fontWeight: 'bold',
-    },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 16 },
+    sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    sectionTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.5 },
+    countBubble: { borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 },
+    countText: { fontSize: 12, fontWeight: '800' },
 
-    // ── empty state ──
-    emptyCard: {
-        borderRadius: 14,
-        padding: 24,
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 10,
-    },
-    emptyText: {
-        fontSize: 14,
-        textAlign: 'center',
-    },
+    listCard: { borderRadius: 16, marginBottom: 12, padding: 12 },
+    listCardRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    listIconBox: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    listCardContent: { flex: 1 },
+    listCardId: { fontSize: 15, fontWeight: '700', marginBottom: 2 },
+    listCardSub: { fontSize: 13, fontWeight: '500' },
+    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    badgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+    feeAmount: { fontSize: 16, fontWeight: '800', marginRight: 4 },
 
-    // ── loading ──
-    loadingWrap: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 16,
-    },
-    loadingText: {
-        fontSize: 15,
-    },
-    accountActions: {
-        marginTop: 20,
-        marginBottom: 10,
-    },
-    actionTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        marginBottom: 10,
-    },
-    deleteBtn: {
-        borderWidth: 1,
-        borderRadius: 12,
-        padding: 14,
-        alignItems: 'center',
-    },
+    emptyWrap: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(150,150,150,0.1)', borderStyle: 'dashed', marginBottom: 16 },
+    emptyText: { fontSize: 14, fontWeight: '600', marginTop: -8 },
+
+    deleteBtn: { marginTop: 32, borderWidth: 1, borderColor: '#FF4B4B', borderRadius: 16, padding: 16, alignItems: 'center', backgroundColor: 'rgba(255, 75, 75, 0.05)' },
 });
 
 export default DashboardScreen;

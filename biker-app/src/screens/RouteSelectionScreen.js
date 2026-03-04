@@ -425,7 +425,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
         // Default
         if (cat.includes('amenity')) return 'store';
         if (cat.includes('highway')) return 'road';
-        if (cat.includes('place')) return 'city';
+        if (cat.includes('place')) return 'business';
         return 'map-marker';
     };
 

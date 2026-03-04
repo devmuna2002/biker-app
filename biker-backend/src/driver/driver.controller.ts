@@ -51,14 +51,20 @@ export class DriverController {
     async updateLocation(@CurrentUser() user: any, @Body() dto: UpdateDriverLocationDto) {
         const res = await this.driver.updateLocation(user.id, dto.lat, dto.lng);
         const biker = await this.driver.getBikerForUser(user.id);
-        await this.cache.set(biker.id, {
-            lat: dto.lat,
-            lng: dto.lng,
-            speedMps: dto.speedMps,
-            headingDeg: dto.headingDeg,
-            accuracyM: dto.accuracyM,
-            ts: Date.now(),
-        });
+
+        if (biker.isOnline && biker.isAvailable) {
+            await this.cache.set(biker.id, {
+                lat: dto.lat,
+                lng: dto.lng,
+                speedMps: dto.speedMps,
+                headingDeg: dto.headingDeg,
+                accuracyM: dto.accuracyM,
+                ts: Date.now(),
+            });
+        } else {
+            // Ensure they are removed if they just went offline/unavailable
+            await this.cache.remove(biker.id);
+        }
         return res;
     }
 

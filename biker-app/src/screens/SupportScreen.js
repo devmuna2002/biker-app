@@ -38,7 +38,7 @@ const SupportScreen = ({ navigation }) => {
     const ContactOption = ({ icon, title, subtitle, action }) => (
         <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={2}>
             <View style={styles.row}>
-                <IconButton icon={bi(icon)} size={32} iconColor={theme.colors.secondary} />
+                <IconButton icon={icon} size={32} iconColor={theme.colors.secondary} />
                 <View style={styles.content}>
                     <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
                     <Text style={[styles.subtitle, { color: theme.colors.secondaryText || '#7F8C8D' }]}>{subtitle}</Text>
@@ -66,12 +66,6 @@ const SupportScreen = ({ navigation }) => {
                     Need help with a recent trip or account issue? Our support team is here 24/7.
                 </Text>
 
-                <ContactOption
-                    icon={bi('chat-processing')}
-                    title="Live Chat"
-                    subtitle="Chat with a support agent now"
-                    action={() => navigation.navigate('Chat', { recipientName: 'Support', recipientRole: 'support' })}
-                />
                 <ContactOption
                     icon={bi('email-outline')}
                     title="Email Support"

@@ -68,6 +68,9 @@ export class PaymentsService {
         // update biker record to reflect latest subscription status/expiry
         if (payload.subscriptionStatus) biker.subscriptionStatus = payload.subscriptionStatus as string;
         if (payload.expiryDate) biker.subscriptionExpiryDate = new Date(payload.expiryDate);
+        if (biker.isOnline && biker.subscriptionStatus === 'active') {
+            biker.isAvailable = true;
+        }
         await this.bikerRepo.save(biker);
 
         return saved;
@@ -83,6 +86,9 @@ export class PaymentsService {
         if (sub.biker) {
             sub.biker.subscriptionStatus = SubscriptionStatus.ACTIVE;
             if (sub.expiryDate) sub.biker.subscriptionExpiryDate = sub.expiryDate;
+            if (sub.biker.isOnline) {
+                sub.biker.isAvailable = true;
+            }
             await this.bikerRepo.save(sub.biker);
         }
 
