@@ -32,6 +32,11 @@ export class NotificationsService {
         return { success: true };
     }
 
+    async deleteAllForUser(userId: number) {
+        await this.notificationsRepository.delete({ user: { id: userId } } as any);
+        return { success: true };
+    }
+
     async countUnreadForUser(userId: number) {
         return this.notificationsRepository.count({ where: { user: { id: userId }, isRead: false } });
     }

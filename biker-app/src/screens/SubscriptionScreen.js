@@ -51,9 +51,9 @@ const SubscriptionScreen = ({ navigation }) => {
     if (user?.id) {
       SheetService.getBikerSubscriptions(user.id, { timeout: 8000 })
         .then(res => {
-          const rawSubs = res?.data
+          const rawSubs = (res?.data
             ? (Array.isArray(res.data) ? res.data : res.data.subscriptions || [])
-            : (Array.isArray(res) ? res : []);
+            : (Array.isArray(res) ? res : [])).filter(s => !!s);
           const now = new Date();
           rawSubs.forEach(s => {
             if (s.expiryDate && new Date(s.expiryDate) < now) {

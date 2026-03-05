@@ -63,10 +63,10 @@ export class Biker {
     @Column({ nullable: true })
     currentDestination: string;
 
-    @Column({ default: true })
+    @Column({ default: false })
     isOnline: boolean;
 
-    @Column({ default: true })
+    @Column({ default: false })
     isAvailable: boolean;
 
     @Column({ type: 'json', nullable: true })

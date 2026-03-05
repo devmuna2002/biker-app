@@ -12,6 +12,7 @@ import { pointFromLatLng } from '../common/geo';
 import { User } from '../users/user.entity';
 import { Biker } from '../bikers/biker.entity';
 import { DriverAssignment, DriverAssignmentStatus } from './driver-assignment.entity';
+import { OrderBid } from './order-bid.entity';
 import { Payment, PaymentMethod, PaymentStatus } from '../payments/payment.entity';
 import { TrackingSession, TrackingSessionStatus } from '../tracking/tracking-session.entity';
 import { DriverLocationCacheService } from '../drivers/driver-location-cache.service';
@@ -32,6 +33,7 @@ export class OrderFlowService {
         @InjectRepository(Payment) private readonly paymentsRepo: Repository<Payment>,
         @InjectRepository(TrackingSession) private readonly trackingRepo: Repository<TrackingSession>,
         @InjectRepository(SavedLocation) private readonly savedRepo: Repository<SavedLocation>,
+        @InjectRepository(OrderBid) private readonly bidsRepo: Repository<OrderBid>,
         private readonly cache: DriverLocationCacheService,
         private readonly zones: ZonesService,
         private readonly dispatchQueue: DispatchQueueService,
@@ -166,11 +168,38 @@ export class OrderFlowService {
             }
 
             const biker = await this.lockNearestDriver(qr, pickupLat, pickupLng, radiusKm, candidateIds, draft.serviceType);
-            if (!biker) throw new ServiceUnavailableException('No drivers available');
+
+            if (!biker) {
+                console.log(`[OrderFlow] No biker locked for candidates: ${candidateIds.join(',')}. preferredBikerId was: ${dto.preferredBikerId}`);
+                // Fallback: If we couldn't lock THE preferred choice, or couldn't find ANY, switch to broadcast mode
+                const order = draft;
+                order.status = OrderStatus.PENDING_BIDS;
+                order.suggestedPriceCents = order.suggestedPriceCents || 0;
+                await qr.manager.save(Order, order);
+
+                await qr.commitTransaction();
+
+                console.log(`[OrderFlow] Falling back to Broadcast mode for order ${order.id}`);
+                // Broadcast to all nearby drivers
+                this.realtime.emitToAll('new_order_request', {
+                    orderId: order.id,
+                    serviceType: order.serviceType,
+                    pickupAddress: order.pickupAddress,
+                    dropoffAddress: order.dropoffAddress,
+                    priceCents: order.suggestedPriceCents,
+                    distanceKm: order.distanceKm,
+                    etaMinutes: order.etaMinutes,
+                });
+
+                return {
+                    success: true,
+                    data: { orderId: order.id, status: OrderStatus.PENDING_BIDS },
+                };
+            }
 
             const lockedAt = new Date();
-            const order = await qr.manager.findOne(Order, { where: { id: draft.id } as any, relations: ['user'] });
-            if (!order || order.status !== OrderStatus.DRAFT) throw new BadRequestException('Draft changed');
+            const order = draft;
+            if (!order || order.status !== OrderStatus.DRAFT) throw new BadRequestException('Order status changed');
 
             order.biker = biker;
             // Also explicitly update the lat/lng in the biker object for the order
@@ -202,11 +231,19 @@ export class OrderFlowService {
             });
             await qr.manager.save(Payment, payment);
 
-            const session = qr.manager.create(TrackingSession, {
-                order,
-                status: TrackingSessionStatus.ACTIVE,
-                startedAt: new Date(),
-            });
+            // Check if a tracking session already exists to avoid unique constraint violation
+            let session = await qr.manager.findOne(TrackingSession, { where: { order: { id: order.id } } as any });
+            if (session) {
+                session.status = TrackingSessionStatus.ACTIVE;
+                session.startedAt = new Date();
+                session.endedAt = null;
+            } else {
+                session = qr.manager.create(TrackingSession, {
+                    order,
+                    status: TrackingSessionStatus.ACTIVE,
+                    startedAt: new Date(),
+                });
+            }
             await qr.manager.save(TrackingSession, session);
 
             biker.isAvailable = false;
@@ -259,16 +296,20 @@ export class OrderFlowService {
             });
 
             // Broadcast to every online biker (including restricted mode) so they can see the request
-            this.realtime.emitToAll('new_order_request', {
-                orderId: order.id,
-                serviceType: order.serviceType,
-                pickupAddress: order.pickupAddress,
-                dropoffAddress: order.dropoffAddress,
-                priceCents: order.finalPriceCents ?? order.suggestedPriceCents,
-                distanceKm: order.distanceKm,
-                etaMinutes: order.etaMinutes,
-                assignedBikerId: biker.id,
-            });
+            // This block is now only for direct assignment, not for PENDING_BIDS
+            // if (!dto.preferredBikerId) { // This condition is now handled by the new block above
+            //     this.realtime.emitToAll('new_order_request', {
+            //         orderId: order.id,
+            //         serviceType: order.serviceType,
+            //         pickupAddress: order.pickupAddress,
+            //         dropoffAddress: order.dropoffAddress,
+            //         priceCents: order.finalPriceCents ?? order.suggestedPriceCents,
+            //         distanceKm: order.distanceKm,
+            //         etaMinutes: order.etaMinutes,
+            //         assignedBikerId: biker.id,
+            //     });
+            // }
+
 
             return {
                 success: true,
@@ -301,21 +342,18 @@ export class OrderFlowService {
         preferredIds: number[],
         serviceType: ServiceType,
     ): Promise<Biker | null> {
+        // Step 1: Find and lock the biker ID only
         const qb = qr.manager
             .createQueryBuilder(Biker, 'b')
-            .leftJoinAndSelect('b.user', 'user')
+            .select('b.id') // Only select ID for the lock
             .where('b.isOnline = true')
             .andWhere('b.isAvailable = true');
 
         qb.setParameters({ lat, lng });
 
-        // No strict vehicleType filter — any online available biker can take any job
-        // (The customer already selected the biker they want)
-
         if (preferredIds && preferredIds.length > 0) {
             qb.andWhere('b.id IN (:...ids)', { ids: preferredIds });
         } else {
-            // Auto-assignment: only pick drivers with active subscription or trial
             const now = new Date();
             qb.andWhere('(b.subscriptionStatus = :sStatus OR b.trialExpiryDate >= :now)', { sStatus: 'active', now });
             qb.andWhere(
@@ -332,7 +370,143 @@ export class OrderFlowService {
             .setLock('pessimistic_write')
             .setOnLocked('skip_locked');
 
-        const biker = await qb.getOne();
-        return biker || null;
+        const locked = await qb.getOne();
+        if (!locked) return null;
+
+        // Step 2: Now that we have the lock, fetch the full object with relations
+        return qr.manager.findOne(Biker, {
+            where: { id: locked.id },
+            relations: ['user'],
+        });
+    }
+
+    async notifyStatusUpdate(orderId: number, status: OrderStatus) {
+        try {
+            const order = await this.ordersRepo.findOne({
+                where: { id: orderId } as any,
+                relations: ['user', 'biker', 'biker.user']
+            });
+            if (!order) return;
+
+            const payload = {
+                orderId: order.id,
+                status,
+                updatedAt: new Date().toISOString(),
+            };
+
+            // Notify everyone in the order room
+            this.realtime.emitToOrder(order.id, 'order_status_update', payload);
+
+            // Notify specific customer
+            if (order.user?.id) {
+                this.realtime.emitToUser(order.user.id, 'order_status_update', payload);
+            }
+
+            // Notify specific biker
+            if (order.biker?.user?.id) {
+                this.realtime.emitToUser(order.biker.user.id, 'order_status_update', payload);
+            }
+
+            // If cancelled, clear it from public requests
+            if (status === OrderStatus.CANCELLED) {
+                this.realtime.emitToAll('new_order_request_cancelled', { orderId: order.id });
+            }
+        } catch (e) {
+            // ignore realtime errors
+        }
+    }
+
+    async placeBid(bikerId: number, orderId: number, priceCents: number) {
+        const order = await this.ordersRepo.findOne({ where: { id: orderId } as any, relations: ['user'] });
+        if (!order || order.status !== OrderStatus.PENDING_BIDS) throw new BadRequestException('Order not available for bids');
+
+        const biker = await this.bikersRepo.findOne({ where: { id: bikerId }, relations: ['user'] });
+        if (!biker || !biker.isOnline) throw new BadRequestException('Biker not available');
+
+        // Check if already bid
+        const existing = await this.bidsRepo.findOne({ where: { order: { id: orderId }, biker: { id: bikerId } } as any });
+        if (existing) throw new BadRequestException('Already bid on this order');
+
+        const bid = this.bidsRepo.create({
+            order,
+            biker,
+            offeredPriceCents: priceCents,
+            status: 'pending' as any,
+        });
+        await this.bidsRepo.save(bid);
+
+        // Notify customer
+        if (order.user?.id) {
+            this.realtime.emitToUser(order.user.id, 'new_bid', {
+                orderId: order.id,
+                bid: {
+                    id: bid.id,
+                    priceCents: bid.offeredPriceCents,
+                    biker: {
+                        id: biker.id,
+                        name: biker.user?.name,
+                        rating: 5.0, // mock
+                    }
+                }
+            });
+        }
+
+        return { success: true };
+    }
+
+    async acceptBid(userId: number, bidId: number) {
+        const bid = await this.bidsRepo.findOne({
+            where: { id: bidId },
+            relations: ['order', 'order.user', 'biker', 'biker.user']
+        });
+
+        if (!bid || bid.status !== 'pending') throw new BadRequestException('Bid not valid');
+        if (bid.order.user.id !== userId) throw new BadRequestException('Unauthorized');
+
+        const qr = this.dataSource.createQueryRunner();
+        await qr.connect();
+        await qr.startTransaction();
+
+        try {
+            const order = await qr.manager.findOne(Order, { where: { id: bid.order.id } as any });
+            if (order.status !== OrderStatus.PENDING_BIDS) throw new BadRequestException('Order already assigned');
+
+            const biker = await qr.manager.findOne(Biker, { where: { id: bid.biker.id } as any });
+            if (!biker.isAvailable) throw new BadRequestException('Biker no longer available');
+
+            order.biker = biker;
+            order.status = OrderStatus.ASSIGNED;
+            order.finalPriceCents = bid.offeredPriceCents;
+            order.finalPrice = bid.offeredPriceCents / 100;
+            await qr.manager.save(Order, order);
+
+            biker.isAvailable = false;
+            await qr.manager.save(Biker, biker);
+
+            bid.status = 'accepted' as any;
+            await qr.manager.save(OrderBid, bid);
+
+            // Cleanup other bids
+            await qr.manager.update(OrderBid, { order: { id: order.id }, status: 'pending' }, { status: 'rejected' });
+
+            await qr.commitTransaction();
+
+            // Notify parties
+            this.realtime.emitToUser(bid.order.user.id, 'order_accepted', {
+                orderId: order.id,
+                biker: { id: biker.id, name: biker.user?.name }
+            });
+            this.realtime.emitToUser(bid.biker.user.id, 'order_assigned', {
+                orderId: order.id,
+                status: order.status
+            });
+
+            return { success: true };
+        } catch (e) {
+            await qr.rollbackTransaction();
+            throw e;
+        } finally {
+            await qr.release();
+        }
     }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { Text, IconButton, Surface, useTheme, Avatar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
@@ -46,6 +46,26 @@ const NotificationsScreen = ({ navigation }) => {
         }
     };
 
+    const clearAllNotifications = () => {
+        Alert.alert(
+            "Clear Messages",
+            "Are you sure you want to delete all messages?",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: 'Clear',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setNotifications([]);
+                        try {
+                            await SheetService.clearAllNotifications();
+                        } catch (e) { }
+                    }
+                }
+            ]
+        );
+    };
+
     const getColor = (type) => {
         switch (type) {
             case 'safety': return theme.colors.error;
@@ -90,7 +110,7 @@ const NotificationsScreen = ({ navigation }) => {
             <View style={styles.header}>
                 <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Notifications</Text>
-                <IconButton icon={bi('dots-vertical')} size={24} iconColor={theme.colors.text} />
+                <IconButton icon={bi('dots-vertical')} size={24} iconColor={theme.colors.text} onPress={clearAllNotifications} />
             </View>
 
             <FlatList

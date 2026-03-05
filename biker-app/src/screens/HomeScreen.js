@@ -1,21 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity, ScrollView, ActivityIndicator, Alert, StatusBar, TextInput, FlatList, Keyboard } from 'react-native';
+import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
 import { Text, Avatar, IconButton, Surface, Button, Menu, useTheme, Portal, Modal, Divider } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { useNavigation, useRoute, DrawerActions, useFocusEffect } from '@react-navigation/native';
+import * as SafeAreaContext from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
 import AppSecurity from '../utils/AppSecurity';
 import { bi } from '../components/AppIcon';
+import InAppCallUI from '../components/InAppCallUI';
+import CallService from '../api/CallService';
 import mapStyle from '../theme/mapStyle.json';
+import * as Linking from 'expo-linking';
 
 const { width, height } = Dimensions.get('window');
 const HomeScreen = () => {
     const theme = useTheme();
     const navigation = useNavigation();
     const route = useRoute();
+    const insets = SafeAreaContext.useSafeAreaInsets ? SafeAreaContext.useSafeAreaInsets() : { top: 0, bottom: 0, left: 0, right: 0 };
     const mapRef = useRef(null);
     const socketRef = useRef(null);
     const scrollViewRef = useRef(null);
@@ -31,7 +37,9 @@ const HomeScreen = () => {
     const [selectedRoute, setSelectedRoute] = useState(null);
     const [routeCoords, setRouteCoords] = useState(null);
     const [bikerPos, setBikerPos] = useState(null);
-    const [selectedBiker, setSelectedBiker] = useState(null);
+    const [isSettingLocation, setIsSettingLocation] = useState(false);
+    const [bids, setBids] = useState([]);
+    const [showNearby, setShowNearby] = useState(true);
     const [isTracking, setIsTracking] = useState(false);
     const [draftOrderId, setDraftOrderId] = useState(null);
     const [dashboard, setDashboard] = useState(null);
@@ -40,6 +48,8 @@ const HomeScreen = () => {
     const [pinningMode, setPinningMode] = useState(false);
     const [routePickup, setRoutePickup] = useState(null); // pickup from route selection
     const [ambientPlaces, setAmbientPlaces] = useState([]);
+    const [isCalling, setIsCalling] = useState(false);
+    const [callState, setCallState] = useState('idle');
 
     // ── Location Search State ──────────────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
@@ -68,10 +78,12 @@ const HomeScreen = () => {
     const [searchError, setSearchError] = useState(null);
     const searchTimerRef = useRef(null);
     const [bikerRoutes, setBikerRoutes] = useState([]); // Routes from bikers to pickup
+    const [selectedBiker, setSelectedBiker] = useState(null);
 
     // Local state to trigger re-render on profile update
     const [user, setUser] = useState(SheetService.currentUser);
     const [showWelcome, setShowWelcome] = useState(false);
+    const [unreadNotifications, setUnreadNotifications] = useState(0);
 
     useEffect(() => {
         const checkTutorial = async () => {
@@ -89,9 +101,65 @@ const HomeScreen = () => {
     // Refresh user data when screen comes into focus
     useFocusEffect(
         React.useCallback(() => {
-            setUser(SheetService.currentUser);
+            const checkUnread = async () => {
+                if (SheetService.currentUser?.id) {
+                    try {
+                        const res = await SheetService.getNotifications();
+                        if (res?.data?.notifications) {
+                            setUnreadNotifications(res.data.notifications.filter(n => !n.isRead).length);
+                        }
+                    } catch (e) { }
+                }
+            };
+            checkUnread();
+
+            const current = SheetService.currentUser;
+            setUser(current);
+            if (current?.id) {
+                CallService.init(current.id);
+                CallService.onCallStateChange = (state) => {
+                    setCallState(state);
+                    if (state === 'incoming' || state === 'calling') setIsCalling(true);
+                    else if (state === 'idle' || state === 'ended' || state === 'busy') setIsCalling(false);
+                };
+            }
         }, [])
     );
+
+    // Active order polling for customer
+    useEffect(() => {
+        let interval;
+        const checkActive = async () => {
+            if (!user?.id) return;
+            try {
+                const res = await SheetService.getUserActiveOrder();
+                if (res?.data?.order && res?.success !== false) {
+                    const o = res.data.order;
+                    setActiveOrder({
+                        id: o.id,
+                        status: o.status,
+                        biker: o.biker,
+                        pickup: { address: o.pickupAddress || o.pickup?.address },
+                        dropoff: { address: o.dropoffAddress || o.dropoff?.address, label: o.dropoffLabel || o.dropoff?.label },
+                        priceCents: o.priceCents
+                    });
+                    setIsTracking(true);
+                } else if (res?.success) {
+                    // Backend explicitly verified there is no active order
+                    setActiveOrder(null);
+                    setIsTracking(false);
+                }
+            } catch (e) {
+                // ignore
+            }
+        };
+
+        if (user?.id) {
+            checkActive();
+            interval = setInterval(checkActive, 10000); // Poll every 10s
+        }
+        return () => { if (interval) clearInterval(interval); };
+    }, [user?.id]);
 
     // Keep locationRef in sync with location state
     useEffect(() => {
@@ -151,57 +219,80 @@ const HomeScreen = () => {
         Keyboard.dismiss();
     }, []);
 
-    const refreshNearby = async (coords) => {
-        try {
-            const init = await SheetService.dashboardInit({ lat: coords.latitude, lng: coords.longitude, radiusKm: 50 });
+    // 1. One-time Init (Socket + Ambient places)
+    useEffect(() => {
+        if (!location) return;
+
+        // Initial dashboard pull
+        SheetService.dashboardInit({ lat: location.latitude, lng: location.longitude, radiusKm: 50 }).then(init => {
             if (init?.success) {
                 setDashboard(init.data);
                 setDrivers(init.data.nearbyDrivers || []);
                 setUser(init.data.user || SheetService.currentUser);
             }
-            // Fetch ambient places for map richness
-            try {
-                const mapPlaces = await SheetService.getNearbyProviders({
-                    lat: coords.latitude,
-                    lng: coords.longitude,
-                    kind: 'restaurant',
-                    radiusM: 3000,
-                    limit: 15
-                });
-                if (mapPlaces?.data?.providers) {
-                    setAmbientPlaces(mapPlaces.data.providers);
-                }
-            } catch { /* ignore */ }
-            // attempt to flush any cached draft orders when network is available
-            try {
-                await SheetService.flushDraftQueue();
-            } catch { /* ignore */ }
+        }).catch(() => { });
 
-            if (!socketRef.current) {
-                try {
-                    socketRef.current = await SheetService.connectTrackingSocket();
+        // Fetch ambient places once - Nominatim is slow, don't poll it!
+        SheetService.getNearbyProviders({
+            lat: location.latitude,
+            lng: location.longitude,
+            kind: 'restaurant',
+            radiusM: 3000,
+            limit: 15
+        }).then(res => {
+            if (res?.data?.providers) setAmbientPlaces(res.data.providers);
+        }).catch(() => { });
 
-                    // Register with backend
+        // Connect Socket once
+        if (!socketRef.current) {
+            SheetService.connectTrackingSocket().then(socket => {
+                if (socket) {
+                    socketRef.current = socket;
                     if (SheetService.currentUser?.id) {
-                        socketRef.current.emit('register', {
-                            userId: SheetService.currentUser.id,
-                            userType: 'customer'
-                        });
+                        socket.emit('register', { userId: SheetService.currentUser.id, userType: 'customer' });
                     }
-                } catch (err) {
-                    // socket connection failure is non-fatal; log for debugging
-                    console.log('[HomeScreen] socket connect failed', err);
                 }
-            }
-        } catch {
-            // ignore
+            }).catch(e => console.log('[HomeScreen] Socket connect failed:', e));
         }
-    };
+    }, [location?.latitude, location?.longitude]);
 
+    // 2. Fast Polling for Nearby Drivers (Lightweight)
     useEffect(() => {
         if (!location) return;
-        refreshNearby(location);
-        const interval = setInterval(() => refreshNearby(location), 10000);
+
+        const pollDrivers = async () => {
+            try {
+                const res = await SheetService.getDriversNearby({
+                    lat: location.latitude,
+                    lng: location.longitude,
+                    radiusKm: 50
+                });
+                if (res?.success && res.data?.drivers) {
+                    setDrivers(res.data.drivers);
+                }
+            } catch (e) { /* ignore */ }
+        };
+
+        const interval = setInterval(pollDrivers, 8000); // 8 seconds for a responsive map feel
+        return () => clearInterval(interval);
+    }, [location?.latitude, location?.longitude]);
+
+    // 3. Periodic Dashboard Sync (Background updates)
+    useEffect(() => {
+        if (!location) return;
+
+        const syncDashboard = async () => {
+            try {
+                const init = await SheetService.dashboardInit({ lat: location.latitude, lng: location.longitude, radiusKm: 50 });
+                if (init?.success) {
+                    setDashboard(init.data);
+                    setUser(init.data.user || SheetService.currentUser);
+                }
+                await SheetService.flushDraftQueue();
+            } catch { /* ignore */ }
+        };
+
+        const interval = setInterval(syncDashboard, 60000); // Heavy sync every minute
         return () => clearInterval(interval);
     }, [location?.latitude, location?.longitude]);
 
@@ -547,6 +638,49 @@ const HomeScreen = () => {
 
     const [activeOrder, setActiveOrder] = useState(null);
 
+    const handleCallBiker = () => {
+        if (!activeOrder?.biker?.id) {
+            Alert.alert('Cannot call', 'Biker information missing.');
+            return;
+        }
+        setIsCalling(true);
+        setCallState('calling');
+        CallService.init(user?.id);
+        CallService.onCallStateChange = (state) => {
+            setCallState(state);
+            if (state === 'idle' || state === 'ended') {
+                setIsCalling(false);
+            }
+        };
+        CallService.initiateCall(activeOrder.biker.id);
+    };
+
+    const handleChatBiker = () => {
+        if (!activeOrder) return;
+        navigation.navigate('Chat', {
+            orderId: activeOrder.id,
+            recipientId: activeOrder.biker?.id,
+            recipientName: activeOrder.biker?.name || 'Biker',
+            recipientRole: 'biker'
+        });
+    };
+
+    const handleCancelTrip = async () => {
+        if (!activeOrder?.id) return;
+        try {
+            const res = await SheetService.cancelOrder(activeOrder.id);
+            if (res && res.success !== false) {
+                setActiveOrder(null);
+                setIsTracking(false);
+                Alert.alert('Trip Cancelled', 'Your trip has been cancelled successfully.');
+            } else {
+                Alert.alert('Cancel Failed', res?.message || 'Could not cancel trip.');
+            }
+        } catch (e) {
+            Alert.alert('Error', 'Network error or server failed to respond.');
+        }
+    };
+
     const handleConfirmOrder = async () => {
         if (!location) {
             Alert.alert('Location Error', 'Location not ready. Please wait a moment.');
@@ -580,7 +714,11 @@ const HomeScreen = () => {
             const draftId = draftRes?.data?.draftOrder?.id || draftOrderId;
             if (draftId) setDraftOrderId(draftId);
 
-            // 2. Confirm and create — pass the selected biker so backend uses them directly
+            // 2. Prepare socket for incoming events before creating order
+            const socket = socketRef.current?.connected ? socketRef.current : await SheetService.connectTrackingSocket();
+            socketRef.current = socket;
+
+            // 3. Confirm and create — pass the selected biker so backend uses them directly
             const res = await SheetService.createOrder({
                 paymentMethod: 'cash',
                 draftOrderId: draftId,
@@ -589,12 +727,7 @@ const HomeScreen = () => {
 
             if (!res?.success) {
                 const msg = res?.message || 'Order creation failed';
-                Alert.alert(
-                    'Order Failed',
-                    msg.includes('No drivers') || msg.includes('ServiceUnavailable')
-                        ? 'No bikers are available right now. Please try again in a moment.'
-                        : msg
-                );
+                Alert.alert('Order Failed', msg);
                 setIsTracking(false);
                 return;
             }
@@ -609,59 +742,67 @@ const HomeScreen = () => {
             };
             setActiveOrder(newOrder);
 
-            // 3. Subscribe to live tracking for this order
-            const socket = socketRef.current?.connected ? socketRef.current : await SheetService.connectTrackingSocket();
-            socketRef.current = socket;
             socket.emit('subscribe', { orderId });
 
+            // Set up listeners (we can do this once or refresh them)
             socket.off('tracking_update');
             socket.on('tracking_update', (u) => {
-                if (u?.orderId !== orderId) return;
-                setBikerPos({ latitude: u.lat, longitude: u.lng });
+                if (u?.orderId === orderId) setBikerPos({ latitude: u.lat, longitude: u.lng });
             });
 
             socket.off('order_accepted');
             socket.on('order_accepted', (data) => {
                 if (data?.orderId !== orderId) return;
                 setActiveOrder(prev => prev ? { ...prev, status: 'accepted', biker: data.biker } : prev);
+                setBids([]); // Clear bids once accepted
                 Alert.alert('Biker Accepted', `${data.biker?.name || 'A biker'} is on the way!`);
+            });
+
+            socket.on('new_bid', (data) => {
+                if (data?.orderId !== orderId) return;
+                setBids(prev => {
+                    const exists = prev.find(b => b.id === data.bid.id);
+                    if (exists) return prev;
+                    return [...prev, data.bid];
+                });
             });
 
             socket.off('order_status_update');
             socket.on('order_status_update', async (data) => {
                 if (data?.orderId !== orderId) return;
                 setActiveOrder(prev => prev ? { ...prev, status: data.status } : prev);
-                if (data.status === 'completed') {
-                    const completedBiker = data.biker || {};
-                    const completedOrderId = data.orderId;
-                    // Persist pending rating so user can't bypass it
-                    await AppSecurity.setPendingRating(
-                        completedOrderId,
-                        completedBiker.id,
-                        completedBiker.name || 'Your Biker'
-                    );
+
+                if (data.status === 'cancelled') {
+                    Alert.alert('Trip Cancelled', 'Your trip has been cancelled.');
                     setActiveOrder(null);
                     setSelectedRoute(null);
                     setIsTracking(false);
-                    // Force navigate to mandatory rating
-                    navigation.navigate('Rating', {
-                        bikerId: completedBiker.id,
-                        bikerName: completedBiker.name || 'Your Biker',
-                        bikerPhoto: completedBiker.photo || null,
-                        orderId: completedOrderId,
-                    });
+                } else if (data.status === 'completed') {
+                    if (user?.role === 'customer') {
+                        const completedBiker = data.biker || {};
+                        const completedOrderId = data.orderId;
+                        // Persist pending rating so user can't bypass it
+                        await AppSecurity.setPendingRating(
+                            completedOrderId,
+                            completedBiker.id,
+                            completedBiker.name || 'Your Biker'
+                        );
+                        // Force navigate to mandatory rating
+                        navigation.navigate('Rating', {
+                            bikerId: completedBiker.id,
+                            bikerName: completedBiker.name || 'Your Biker',
+                            bikerPhoto: completedBiker.photo || null,
+                            orderId: completedOrderId,
+                        });
+                    }
+                    setActiveOrder(null);
+                    setSelectedRoute(null);
+                    setIsTracking(false);
                 }
             });
 
             Alert.alert('Order Confirmed! 🎉', `Your biker ${selectedBiker?.name ? '(' + selectedBiker.name + ') ' : ''}is on the way.`);
-        } catch (e) {
-            const msg = e?.response?.data?.message || e?.message || 'Failed to confirm order';
-            Alert.alert(
-                'Order Failed',
-                msg.toLowerCase().includes('no driver') || msg.toLowerCase().includes('unavailable')
-                    ? 'No bikers available nearby. Please try again or wait a moment.'
-                    : msg
-            );
+        } finally {
             setIsTracking(false);
         }
     };
@@ -933,6 +1074,7 @@ const HomeScreen = () => {
             setRoutePickup(null);
             setSelectedProvider(null);
             setFoodMenuVisible(false);
+            setSelectedBiker(null);
             if (route.params?.selectedRoute || route.params?.reorder) {
                 navigation.setParams({ selectedRoute: null, reorder: null });
             }
@@ -954,6 +1096,7 @@ const HomeScreen = () => {
             setSearchingBikers(false);
             setRoutePickup(null);
             setSelectedProvider(null);
+            setSelectedBiker(null);
             setFoodMenuVisible(true);
             return;
         }
@@ -970,6 +1113,7 @@ const HomeScreen = () => {
         setSearchingBikers(false);
         setRoutePickup(null);
         setSelectedProvider(null);
+        setSelectedBiker(null);
         setFoodMenuVisible(false);
         if (route.params?.selectedRoute || route.params?.reorder) {
             navigation.setParams({ selectedRoute: null, reorder: null });
@@ -1181,6 +1325,38 @@ const HomeScreen = () => {
         }
     }, [routeCoords]);
 
+
+    const handleCancelOrder = async (orderId) => {
+        try {
+            const res = await SheetService.cancelOrder(orderId);
+            if (res?.success) {
+                setActiveOrder(null);
+                setBids([]);
+                Alert.alert('Order Cancelled', 'Your order request has been cancelled.');
+            } else {
+                Alert.alert('Error', res?.message || 'Failed to cancel order.');
+            }
+        } catch (error) {
+            Alert.alert('Error', 'Network error or server failed to respond.');
+        }
+    };
+
+    const handleAcceptBid = async (bidId) => {
+        if (!activeOrder?.id) return;
+        try {
+            const res = await SheetService.acceptBid(activeOrder.id, bidId);
+            if (res?.success) {
+                setActiveOrder(prev => ({ ...prev, status: 'accepted', biker: res.data.biker }));
+                setBids([]);
+                Alert.alert('Bid Accepted', 'Biker is on the way!');
+            } else {
+                Alert.alert('Error', res?.message || 'Failed to accept bid.');
+            }
+        } catch (error) {
+            Alert.alert('Error', 'Network error or server failed to respond.');
+        }
+    };
+
     return (
         <View style={styles.container}>
 
@@ -1268,25 +1444,30 @@ const HomeScreen = () => {
                     }}
                 >
                     {/* Ambient Places */}
-                    {!selectedRoute && !selectedProvider && (ambientPlaces || []).map(p => (
-                        <Marker
-                            key={`ambient-${p.id}`}
-                            coordinate={{ latitude: p.lat, longitude: p.lng }}
-                            title={p.name}
-                            description={p.address}
-                            tracksViewChanges={false}
-                        >
-                            {/* Marker Icon */}
-                            <Surface style={{ padding: 6, backgroundColor: 'rgba(26,26,26,0.9)', borderRadius: 25, borderWidth: 1, borderColor: '#333' }} elevation={2}>
-                                <IconButton
-                                    icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
-                                    size={16}
-                                    iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
-                                    style={{ margin: 0 }}
-                                />
-                            </Surface>
-                        </Marker>
-                    ))}
+                    {!selectedRoute && !selectedProvider && (ambientPlaces || []).map(p => {
+                        const lat = Number(p.lat);
+                        const lng = Number(p.lng);
+                        if (isNaN(lat) || isNaN(lng)) return null;
+                        return (
+                            <Marker
+                                key={`ambient-${p.id}`}
+                                coordinate={{ latitude: lat, longitude: lng }}
+                                title={p.name}
+                                description={p.address}
+                                tracksViewChanges={false}
+                            >
+                                {/* Marker Icon */}
+                                <Surface style={{ padding: 6, backgroundColor: 'rgba(26,26,26,0.9)', borderRadius: 25, borderWidth: 1, borderColor: '#333' }} elevation={2}>
+                                    <IconButton
+                                        icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
+                                        size={16}
+                                        iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
+                                        style={{ margin: 0 }}
+                                    />
+                                </Surface>
+                            </Marker>
+                        );
+                    })}
                     {routeCoords && routeCoords.length >= 2 && (
                         <>
                             {/* Alternative route 1 - for biker access */}
@@ -1367,31 +1548,41 @@ const HomeScreen = () => {
                         </Marker>
                     )}
 
-                    {bikerPos && (
-                        <Marker coordinate={bikerPos} title="Your Biker">
-                            <Avatar.Icon size={40} icon={bi('motorbike')} backgroundColor="#000" color="#A8E05F" />
-                        </Marker>
-                    )}
+                    {(() => {
+                        if (!bikerPos) return null;
+                        const lat = Number(bikerPos.latitude || bikerPos.lat);
+                        const lng = Number(bikerPos.longitude || bikerPos.lng);
+                        if (isNaN(lat) || isNaN(lng)) return null;
+                        return (
+                            <Marker
+                                coordinate={{ latitude: lat, longitude: lng }}
+                                title="Your Biker"
+                            >
+                                <Avatar.Icon size={40} icon={bi('motorbike')} backgroundColor="#000" color="#A8E05F" />
+                            </Marker>
+                        );
+                    })()}
 
-                    {drivers.filter(d => d?.coords?.lat && d?.coords?.lng).map((driver) => (
-                        <Marker
-                            key={String(driver.id)}
-                            coordinate={{
-                                latitude: driver.coords.lat,
-                                longitude: driver.coords.lng,
-                            }}
-                            title={driver.name}
-                            description={driver.vehicleType || 'Biker'}
-                            onPress={() => {
-                                setSelectedBiker(driver);
-                                handleServiceSelect('bike');
-                            }}
-                        >
-                            <View style={[styles.bikerMarker, selectedBiker?.id === driver.id && styles.bikerMarkerSelected]}>
-                                <Avatar.Icon size={30} icon={bi('motorbike')} backgroundColor={selectedBiker?.id === driver.id ? "#00FD3F" : "#A8E05F"} color="#000" />
-                            </View>
-                        </Marker>
-                    ))}
+                    {drivers.filter(d => d?.coords?.lat && d?.coords?.lng).map((driver) => {
+                        const isSelected = selectedBiker?.id === driver.id;
+                        return (
+                            <Marker
+                                key={String(driver.id)}
+                                coordinate={{
+                                    latitude: Number(driver.coords.lat),
+                                    longitude: Number(driver.coords.lng),
+                                }}
+                                onPress={() => setSelectedBiker(driver)}
+                            >
+                                <View style={styles.modernBikerMarker}>
+                                    <View style={[styles.markerBlackCircle, isSelected && { borderColor: '#A8E05F', transform: [{ scale: 1.2 }] }]}>
+                                        <IconButton icon={bi('motorbike')} size={18} iconColor={isSelected ? '#A8E05F' : '#00FD3F'} />
+                                        <View style={[styles.markerCenterDot, isSelected && { backgroundColor: '#A8E05F' }]} />
+                                    </View>
+                                </View>
+                            </Marker>
+                        );
+                    })}
 
                     {activeService === 'local_services' && (providers || []).filter((p) => p?.lat && p?.lng).map((p) => (
                         <Marker
@@ -1413,24 +1604,33 @@ const HomeScreen = () => {
                     ))}
                 </MapView>)}
 
-            {/* Top Bar */}
-            <View style={styles.topBar}>
-                <TouchableOpacity
-                    style={styles.menuButton}
-                    onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
-                >
-                    <IconButton icon={bi('menu')} size={28} iconColor="#FFFFFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={styles.profileButton}
-                    onPress={() => navigation.navigate('ProfileSettings')}
-                >
-                    {user?.photo ? (
-                        <Avatar.Image size={40} source={{ uri: user.photo }} />
-                    ) : (
-                        <Avatar.Icon size={40} icon={bi('account')} backgroundColor="#F4F6F7" color="#BDC3C7" />
-                    )}
-                </TouchableOpacity>
+            {/* Header / Top Bar Redesigned */}
+            <View style={styles.premiumHeader}>
+                <LinearGradient
+                    colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0)']}
+                    style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.headerContent}>
+                    <View style={styles.greetingSection}>
+                        <TouchableOpacity style={styles.profileButtonNav} onPress={() => navigation.navigate('ProfileSettings')}>
+                            {user?.photo ? (
+                                <Avatar.Image size={40} source={{ uri: user.photo }} style={{ backgroundColor: 'transparent' }} />
+                            ) : (
+                                <Avatar.Icon size={40} icon={bi('account')} style={{ backgroundColor: 'transparent' }} color="#FFF" />
+                            )}
+                        </TouchableOpacity>
+                        <View style={{ marginLeft: 12 }}>
+                            <Text style={styles.greetingText}>
+                                {new Date().getHours() < 12 ? 'Good Morning,' : new Date().getHours() < 18 ? 'Good Afternoon,' : 'Good Evening,'}
+                            </Text>
+                            <Text style={styles.userNameText}>{user?.name?.split(' ')[0] || 'Guest'}!</Text>
+                        </View>
+                    </View>
+                    <TouchableOpacity style={styles.notificationBell} onPress={() => navigation.navigate('Notifications')}>
+                        <IconButton icon={bi('bell-outline')} size={24} iconColor="#FFF" />
+                        {unreadNotifications > 0 && <View style={styles.redDot} />}
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* ── inDrive-Style Floating Search Bar (single, no Surface overflow) ── */}
@@ -1545,56 +1745,69 @@ const HomeScreen = () => {
                         contentContainerStyle={styles.panelContent}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
-                        bounces={true}
-                        alwaysBounceVertical={true}
+                        bounces={false}
+                        alwaysBounceVertical={false}
                     >
                         <View style={styles.handle} />
 
                         {/* Active Order Card */}
                         {activeOrder && (
-                            <Surface style={styles.activeOrderCard} elevation={2}>
-                                <View style={styles.activeOrderTop}>
-                                    <View style={styles.activeOrderInfo}>
-                                        <Text style={styles.activeOrderLabel}>{activeOrder.status === 'pending' ? 'Searching for Biker' : 'Trip in Progress'}</Text>
-                                        <Text style={styles.activeOrderBikerName}>{activeOrder.biker?.name || 'Finding Driver...'}</Text>
-                                        <Text style={styles.activeOrderRoute} numberOfLines={1}>To: {activeOrder.dropoff?.label || activeOrder.dropoff?.address || 'Destination'}</Text>
+                            <BlurView intensity={80} tint="dark" style={styles.activeOrderCardStraight}>
+                                <View style={styles.activeOrderHeader}>
+                                    <View>
+                                        <View style={styles.statusPillFancy}>
+                                            <View style={[styles.statusPulse, { backgroundColor: activeOrder.status === 'pending' ? '#F1C40F' : '#00FD3F' }]} />
+                                            <Text style={styles.statusPillTextFancy}>
+                                                {activeOrder.status === 'pending' ? 'Biker Assigned' :
+                                                    activeOrder.status === 'picked_up' ? 'In Transit' : 'In Progress'}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.activeOrderBikerName}>{activeOrder.biker?.name || 'Searching for Biker...'}</Text>
                                     </View>
-                                    <View style={styles.activeOrderActions}>
-                                        <TouchableOpacity
-                                            style={[styles.commBtn, { backgroundColor: '#3498DB', marginBottom: 8 }]}
-                                            onPress={() => {
-                                                const phone = activeOrder.biker?.phone;
-                                                if (phone) {
-                                                    Linking.openURL(`tel:${phone}`).catch(() => Alert.alert('Error', 'Could not open dialer'));
-                                                } else {
-                                                    Alert.alert('No Number', 'Driver phone number not available');
-                                                }
-                                            }}
-                                        >
-                                            <IconButton icon={bi('phone')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
-                                            <Text style={styles.commBtnText}>Call</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={[styles.commBtn, { backgroundColor: '#E74C3C' }]}
-                                            onPress={() => {
-                                                Alert.alert('Cancel Trip', 'Are you sure you want to cancel this trip?', [
-                                                    { text: 'No' },
-                                                    {
-                                                        text: 'Yes, Cancel', style: 'destructive', onPress: () => {
-                                                            setActiveOrder(null);
-                                                            setIsTracking(false);
-                                                            setSelectedRoute(null);
-                                                        }
-                                                    }
-                                                ]);
-                                            }}
-                                        >
-                                            <IconButton icon={bi('close')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
-                                            <Text style={styles.commBtnText}>Cancel</Text>
-                                        </TouchableOpacity>
+                                    <View style={{ alignItems: 'flex-end' }}>
+                                        <Text style={styles.activeOrderPrice}>$0.00</Text>
+                                        <Text style={styles.priceLabelSmall}>TOTAL</Text>
                                     </View>
                                 </View>
-                            </Surface>
+
+                                <View style={styles.straightRouteBox}>
+                                    <View style={[styles.routePointStraight, { marginBottom: 12 }]}>
+                                        <View style={styles.pickupDotFancy} />
+                                        <Text style={styles.routeValueStraight} numberOfLines={1}>{activeOrder.pickup?.address || activeOrder.pickupAddress || 'Pickup'}</Text>
+                                    </View>
+                                    <View style={styles.routePointStraight}>
+                                        <View style={styles.dropoffSquareFancy} />
+                                        <Text style={styles.routeValueStraight} numberOfLines={1}>{activeOrder.dropoff?.label || activeOrder.dropoff?.address || 'Destination'}</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.straightActionRow}>
+                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(0, 253, 63, 0.1)' }]} onPress={handleCallBiker}>
+                                        <IconButton icon={bi('phone')} size={24} iconColor="#00FD3F" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(52, 152, 219, 0.1)' }]} onPress={handleChatBiker}>
+                                        <IconButton icon={bi('chat')} size={24} iconColor="#3498DB" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(231, 76, 60, 0.1)' }]} onPress={() => {
+                                        Alert.alert('Cancel Trip', 'Are you sure?', [
+                                            { text: 'No' },
+                                            { text: 'Yes', onPress: handleCancelTrip }
+                                        ]);
+                                    }}>
+                                        <IconButton icon={bi('close')} size={24} iconColor="#E74C3C" />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Button
+                                    mode="contained"
+                                    buttonColor="#00FD3F"
+                                    textColor="#000"
+                                    style={[styles.mainStatusBtn, { marginTop: 12 }]}
+                                    labelStyle={{ fontWeight: '900', fontSize: 13, textTransform: 'uppercase' }}
+                                >
+                                    {activeOrder.status === 'pending' ? 'Awaiting Pickup' : 'Tracking Live'}
+                                </Button>
+                            </BlurView>
                         )}
 
                         {!activeOrder && (
@@ -1629,32 +1842,29 @@ const HomeScreen = () => {
                                     </View>
                                 )}
 
-                                {/* Service Categories */}
-                                <View style={styles.serviceRow}>
-                                    {services.map((service, idx) => (
+                                {/* Service Categories Redesigned */}
+                                <View style={styles.serviceRowPremium}>
+                                    {services.map((service) => (
                                         <TouchableOpacity
                                             key={service.id}
-                                            style={[
-                                                styles.serviceItem,
-                                                idx !== services.length - 1 && { marginRight: 12 },
-                                                activeService === service.id && styles.activeServiceItem,
-                                            ]}
+                                            style={styles.serviceItemPremium}
                                             onPress={() => handleServiceSelect(service.id)}
                                         >
-                                            <View style={styles.serviceIconContainer}>
+                                            <View style={[
+                                                styles.serviceIconFrame,
+                                                activeService === service.id && styles.activeServiceFrame
+                                            ]}>
                                                 <IconButton
                                                     icon={bi(service.icon)}
-                                                    size={30}
-                                                    iconColor={activeService === service.id ? '#00FD3F' : '#FFFFFF'}
+                                                    size={28}
+                                                    iconColor={activeService === service.id ? '#00FD3F' : '#7F8C8D'}
                                                 />
                                             </View>
-                                            <Text
-                                                style={[
-                                                    styles.serviceLabel,
-                                                    activeService === service.id && styles.activeServiceLabel,
-                                                ]}
-                                            >
-                                                {service.label}
+                                            <Text style={[
+                                                styles.serviceLabelPremium,
+                                                activeService === service.id && styles.activeServiceLabelPremium
+                                            ]}>
+                                                {service.label === 'Biker' ? 'Motorbike' : service.label}
                                             </Text>
                                         </TouchableOpacity>
                                     ))}
@@ -1859,97 +2069,6 @@ const HomeScreen = () => {
                                                 </TouchableOpacity>
                                             </View>
                                         </View>
-
-                                        <View style={styles.buttonRow}>
-                                            {!selectedBiker ? (
-                                                <Button
-                                                    mode="contained"
-                                                    onPress={triggerBikerSearch}
-                                                    loading={searchingBikers}
-                                                    disabled={searchingBikers || !selectedRoute}
-                                                    style={[styles.confirmButton, { flex: 2, backgroundColor: '#00C853' }]}
-                                                    contentStyle={styles.confirmButtonContent}
-                                                    labelStyle={styles.confirmButtonLabel}
-                                                >
-                                                    {searchingBikers ? 'Searching...' : bikersFound.length > 0 ? `${bikersFound.length} Bikers Found` : 'Find Biker'}
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    mode="contained"
-                                                    onPress={handleConfirmOrder}
-                                                    loading={isTracking}
-                                                    disabled={isTracking || !selectedBiker}
-                                                    style={[styles.confirmButton, { flex: 2, backgroundColor: '#00C853' }]}
-                                                    contentStyle={styles.confirmButtonContent}
-                                                    labelStyle={styles.confirmButtonLabel}
-                                                >
-                                                    Confirm with {selectedBiker.name}
-                                                </Button>
-                                            )}
-                                            <Button
-                                                mode="outlined"
-                                                onPress={() => {
-                                                    setSelectedRoute(null);
-                                                    setEditablePrice(null);
-                                                    setRouteCoords(null);
-                                                    setBikerPos(null);
-                                                    setIsTracking(false);
-                                                    setBikersFound([]);
-                                                    setBikerRoutes([]);
-                                                    setSearchError(null);
-                                                    setSearchingBikers(false);
-                                                    setSelectedBiker(null);
-                                                    setRoutePickup(null);
-                                                    if (route.params?.selectedRoute || route.params?.reorder) {
-                                                        navigation.setParams({ selectedRoute: null, reorder: null });
-                                                    }
-                                                    if (activeService !== 'local_services') setSelectedProvider(null);
-                                                }}
-                                                style={styles.cancelButton}
-                                                contentStyle={styles.cancelButtonContent}
-                                                labelStyle={styles.cancelButtonLabel}
-                                            >
-                                                Cancel
-                                            </Button>
-                                        </View>
-
-                                        {/* Biker List */}
-                                        {bikersFound.length > 0 && (
-                                            <View style={styles.bikerListContainer}>
-                                                <Text style={styles.bikerListTitle}>Select a Biker</Text>
-                                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bikerScroll}>
-                                                    {bikersFound.map((biker) => (
-                                                        <TouchableOpacity
-                                                            key={biker.id}
-                                                            style={[
-                                                                styles.bikerCard,
-                                                                selectedBiker?.id === biker.id && styles.bikerCardSelected
-                                                            ]}
-                                                            onPress={() => {
-                                                                setSelectedBiker(biker);
-                                                                if (socketRef.current?.connected) {
-                                                                    socketRef.current.emit('biker_selected', {
-                                                                        bikerId: biker.id,
-                                                                        bikerName: biker.name,
-                                                                        orderId: draftOrderId,
-                                                                        userName: SheetService.currentUser?.name || 'Customer'
-                                                                    });
-                                                                }
-                                                            }}
-                                                        >
-                                                            <Avatar.Icon
-                                                                size={40}
-                                                                icon={bi('motorbike')}
-                                                                color={selectedBiker?.id === biker.id ? "#000" : "#00C853"}
-                                                                style={{ backgroundColor: selectedBiker?.id === biker.id ? "#00C853" : "rgba(0,200,83,0.2)" }}
-                                                            />
-                                                            <Text style={styles.bikerName} numberOfLines={1}>{biker.name}</Text>
-                                                            <Text style={styles.bikerVehicle}>{biker.vehicleNumber || biker.vehicleType || 'Bike'}</Text>
-                                                        </TouchableOpacity>
-                                                    ))}
-                                                </ScrollView>
-                                            </View>
-                                        )}
                                     </View>
                                 )}
 
@@ -1977,24 +2096,92 @@ const HomeScreen = () => {
                                     </View>
                                 )}
 
-                                {/* History & Recent – only shown when no route selected */}
-                                {recentPlaces.length > 0 && (
-                                    <>
-                                        <Text style={styles.sectionTitle}>History &amp; Recent</Text>
-                                        {recentPlaces.map((place) => (
+                                {showNearby && (
+                                    <View style={styles.nearbySection}>
+                                        <View style={styles.nearbyHeaderRow}>
+                                            <Text style={styles.nearbyTitle}>Nearby Bikers</Text>
+                                            <TouchableOpacity onPress={() => setShowNearby(false)}>
+                                                <Text style={styles.hideAllLink}>Hide all</Text>
+                                            </TouchableOpacity>
+                                        </View>
+
+                                        {(bikersFound.length > 0 ? bikersFound : drivers.slice(0, 3)).map((biker) => (
                                             <TouchableOpacity
-                                                key={place.id}
-                                                style={styles.recentItem}
-                                                onPress={() => selectRecentDestination(place)}
+                                                key={biker.id}
+                                                style={[
+                                                    styles.nearbyBikerItem,
+                                                    selectedBiker?.id === biker.id && styles.nearbyBikerItemActive
+                                                ]}
+                                                onPress={() => setSelectedBiker(biker)}
                                             >
-                                                <IconButton icon={bi('history')} size={24} iconColor="#BDC3C7" style={styles.historyIcon} />
-                                                <View style={styles.placeTextContainer}>
-                                                    <Text style={styles.placeName}>{place.name}</Text>
-                                                    <Text style={styles.placeCity}>{place.city}</Text>
+                                                {biker.photo ? (
+                                                    <Avatar.Image size={44} source={{ uri: biker.photo }} style={{ backgroundColor: '#2C2C2E' }} />
+                                                ) : (
+                                                    <Avatar.Icon size={44} icon={bi('account')} style={{ backgroundColor: '#2C2C2E' }} color="#7F8C8D" />
+                                                )}
+                                                <View style={styles.nearbyBikerInfo}>
+                                                    <Text style={styles.nearbyBikerName}>{biker.name || 'Biker'}</Text>
+                                                    <View style={styles.ratingRow}>
+                                                        <IconButton icon={bi('star')} size={12} iconColor="#F1C40F" style={{ margin: 0, width: 14 }} />
+                                                        <Text style={styles.ratingText}>5.0 • {biker.distanceKm ? `${biker.distanceKm.toFixed(1)}km away` : 'Nearby'}</Text>
+                                                    </View>
                                                 </View>
+                                                <IconButton
+                                                    icon={bi(selectedBiker?.id === biker.id ? 'check-circle' : 'motorbike')}
+                                                    size={22}
+                                                    iconColor={selectedBiker?.id === biker.id ? '#00FD3F' : '#A8E05F'}
+                                                />
                                             </TouchableOpacity>
                                         ))}
-                                    </>
+
+                                        {selectedRoute && (
+                                            <View style={{ marginTop: 15 }}>
+                                                <TouchableOpacity
+                                                    style={[
+                                                        styles.confirmBikerBtn,
+                                                        (isTracking || !selectedBiker) && { opacity: 0.5 }
+                                                    ]}
+                                                    onPress={handleConfirmOrder}
+                                                    disabled={isTracking || !selectedBiker}
+                                                >
+                                                    <LinearGradient
+                                                        colors={!selectedBiker ? ['#2C2C2E', '#1C1C1E'] : ['#00FD3F', '#00C853']}
+                                                        style={styles.confirmBikerGradient}
+                                                        start={{ x: 0, y: 0 }}
+                                                        end={{ x: 1, y: 0 }}
+                                                    >
+                                                        <View style={styles.confirmBikerContent}>
+                                                            {isTracking ? <ActivityIndicator size="small" color="#000" style={{ marginRight: 10 }} /> : null}
+                                                            <Text style={[styles.confirmBikerText, !selectedBiker && { color: '#7F8C8D' }]}>
+                                                                {isTracking ? 'sending request...' : `confirm ${selectedBiker ? `booking with ${selectedBiker.name}` : 'order'}`}
+                                                            </Text>
+                                                            {!isTracking && selectedBiker && <IconButton icon={bi('chevron-right')} size={20} iconColor="#000" style={{ margin: 0 }} />}
+                                                        </View>
+                                                    </LinearGradient>
+                                                </TouchableOpacity>
+
+                                                <TouchableOpacity
+                                                    style={styles.cancelBikerBtn}
+                                                    onPress={() => {
+                                                        setSelectedRoute(null);
+                                                        setEditablePrice(null);
+                                                        setRouteCoords(null);
+                                                        setBikerPos(null);
+                                                        setBikersFound([]);
+                                                        setBikerRoutes([]);
+                                                        setSelectedBiker(null);
+                                                    }}
+                                                >
+                                                    <Text style={styles.cancelBikerText}>Change Selection / Cancel</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        )}
+                                    </View>
+                                )}
+                                {!showNearby && (bikersFound.length > 0 || drivers.length > 0) && (
+                                    <TouchableOpacity style={styles.showNearbyBtn} onPress={() => setShowNearby(true)}>
+                                        <Text style={styles.showNearbyText}>Show Nearby Bikers ({bikersFound.length || drivers.length})</Text>
+                                    </TouchableOpacity>
                                 )}
                             </>
                         )}
@@ -2073,6 +2260,85 @@ const HomeScreen = () => {
                     </View>
                 </Modal>
             </Portal>
+
+            <InAppCallUI
+                visible={isCalling}
+                status={callState}
+                recipientName={activeOrder?.biker?.name || 'Biker'}
+                recipientPhoto={activeOrder?.biker?.photo}
+                onEndCall={() => {
+                    CallService.endCall();
+                    setIsCalling(false);
+                }}
+                onRejectCall={() => {
+                    CallService.endCall();
+                    setIsCalling(false);
+                }}
+                onAcceptCall={() => {
+                    CallService.acceptCall();
+                    setCallState('connected');
+                }}
+            />
+
+            {/* Bidding Sheet (inDrive Style) */}
+            {activeOrder?.status === 'pending_bids' && (
+                <Portal>
+                    <View style={styles.biddingOverlay}>
+                        <BlurView intensity={80} style={StyleSheet.absoluteFill} tint="dark" />
+                        <View style={[styles.biddingContent, { paddingBottom: insets.bottom + 20 }]}>
+                            <View style={styles.biddingHeader}>
+                                <View style={styles.statusDot} />
+                                <Text style={styles.biddingTitle}>Looking for Bikers Nearby...</Text>
+                                <IconButton icon={bi('close')} size={20} onPress={() => handleCancelOrder(activeOrder.id)} />
+                            </View>
+
+                            <ScrollView style={styles.bidsScroll} showsVerticalScrollIndicator={false}>
+                                {bids.length === 0 ? (
+                                    <View style={styles.emptyBids}>
+                                        <ActivityIndicator animating color={theme.colors.primary} size="large" />
+                                        <Text style={styles.emptyBidsText}>Waiting for offers...</Text>
+                                    </View>
+                                ) : (
+                                    bids.map(bid => (
+                                        <Surface key={bid.id} style={styles.bidCard} elevation={2}>
+                                            <View style={styles.bidRow}>
+                                                <Avatar.Text size={40} label={bid.biker?.name?.[0] || 'B'} style={{ backgroundColor: theme.colors.primaryContainer }} />
+                                                <View style={styles.bidInfo}>
+                                                    <Text style={styles.bidName}>{bid.biker?.name}</Text>
+                                                    <View style={styles.ratingRow}>
+                                                        <IconButton icon={bi('star')} size={14} iconColor="#FFD700" style={{ margin: 0 }} />
+                                                        <Text style={styles.ratingText}>{bid.biker?.rating || '5.0'}</Text>
+                                                    </View>
+                                                </View>
+                                                <View style={styles.bidAction}>
+                                                    <Text style={styles.bidPrice}>${(bid.priceCents / 100).toFixed(2)}</Text>
+                                                    <Button
+                                                        mode="contained"
+                                                        onPress={() => handleAcceptBid(bid.id)}
+                                                        style={styles.acceptBidBtn}
+                                                        labelStyle={{ fontSize: 12 }}
+                                                    >
+                                                        Accept
+                                                    </Button>
+                                                </View>
+                                            </View>
+                                        </Surface>
+                                    ))
+                                )}
+                            </ScrollView>
+
+                            <Button
+                                mode="outlined"
+                                onPress={() => handleCancelOrder(activeOrder.id)}
+                                style={styles.cancelBiddingBtn}
+                                textColor="#FF4444"
+                            >
+                                Cancel Request
+                            </Button>
+                        </View>
+                    </View>
+                </Portal>
+            )}
         </View>
     );
 };
@@ -2715,10 +2981,13 @@ const styles = StyleSheet.create({
     },
     cancelButtonContent: {
         height: 56,
+        paddingHorizontal: 0,
     },
     cancelButtonLabel: {
         color: '#E74C3C',
         fontWeight: 'bold',
+        minWidth: 0,
+        marginHorizontal: 0,
     },
     sectionTitle: {
         fontSize: 14,
@@ -3010,6 +3279,489 @@ const styles = StyleSheet.create({
         height: 12,
         borderRadius: 6,
         backgroundColor: 'rgba(255,255,255,0.06)',
+    },
+    activeOrderCardStraight: {
+        borderRadius: 24,
+        padding: 22,
+        marginVertical: 12,
+        overflow: 'hidden',
+        borderWidth: 1.5,
+        borderColor: 'rgba(0, 253, 63, 0.15)',
+        backgroundColor: 'rgba(28, 28, 30, 0.7)',
+    },
+    activeOrderHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    activeOrderBikerName: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginTop: 2,
+    },
+    activeOrderPrice: {
+        color: '#00FD3F',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    statusPillFancy: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 10,
+        alignSelf: 'flex-start',
+        marginBottom: 8,
+    },
+    statusPulse: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 8,
+        shadowColor: '#FFF',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 1,
+        shadowRadius: 4,
+    },
+    statusPillTextFancy: {
+        color: '#FFF',
+        fontSize: 11,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    priceLabelSmall: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.4)',
+        fontWeight: '900',
+        marginTop: 2,
+    },
+    pickupDotFancy: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: '#00FD3F',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    dropoffSquareFancy: {
+        width: 12,
+        height: 12,
+        borderRadius: 2,
+        backgroundColor: '#FF4757',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    straightRouteBox: {
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderRadius: 18,
+        padding: 16,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    straightActionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    iconCircleBtn: {
+        width: 46,
+        height: 46,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    mainStatusBtn: {
+        flex: 1,
+        borderRadius: 12,
+        height: 46,
+        justifyContent: 'center',
+    },
+    pickupDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#00d4ff',
+    },
+    dropoffSquare: {
+        width: 8,
+        height: 8,
+        backgroundColor: '#ff6b6b',
+    },
+    routePointStraight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    routeValueStraight: {
+        color: '#FFF',
+        fontSize: 14,
+        fontWeight: '600',
+        flex: 1,
+    },
+    straightRouteBox: {
+        backgroundColor: 'rgba(0,0,0,0.2)',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 16,
+    },
+
+    // ── Premium Redesign Styles ──────────────────────────────────
+    premiumHeader: {
+        paddingTop: 50,
+        paddingBottom: 20,
+        paddingHorizontal: 16,
+        zIndex: 1000,
+    },
+    headerContent: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    greetingSection: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    appBadge: {
+        backgroundColor: '#00FD3F',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    appBadgeText: {
+        color: '#000',
+        fontSize: 10,
+        fontWeight: '900',
+    },
+    appBadgeSub: {
+        color: '#000',
+        fontSize: 10,
+        fontWeight: '900',
+        marginTop: -3,
+    },
+    greetingText: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    userNameText: {
+        color: '#FFF',
+        fontSize: 22,
+        fontWeight: '900',
+    },
+    notificationBell: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    redDot: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#FF4757',
+        borderWidth: 2,
+        borderColor: '#000',
+    },
+    serviceRowPremium: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 25,
+        paddingHorizontal: 4,
+    },
+    serviceItemPremium: {
+        alignItems: 'center',
+        width: 100,
+    },
+    serviceIconFrame: {
+        width: 76,
+        height: 76,
+        borderRadius: 38,
+        backgroundColor: '#1E1E20',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2.5,
+        borderColor: 'transparent',
+    },
+    activeServiceFrame: {
+        borderColor: '#00FD3F',
+        backgroundColor: 'rgba(0, 253, 63, 0.05)',
+        shadowColor: '#00FD3F',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.6,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    serviceLabelPremium: {
+        marginTop: 10,
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#7F8C8D',
+        letterSpacing: 0.4,
+        textAlign: 'center',
+    },
+    activeServiceLabelPremium: {
+        color: '#FFF',
+    },
+    nearbySection: {
+        marginTop: 15,
+        marginBottom: 10,
+    },
+    nearbyHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 18,
+    },
+    nearbyTitle: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: '900',
+        letterSpacing: 0.5,
+    },
+    hideAllLink: {
+        color: '#00FD3F',
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    nearbyBikerItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        padding: 14,
+        borderRadius: 18,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.03)',
+    },
+    nearbyBikerInfo: {
+        flex: 1,
+        marginLeft: 16,
+    },
+    nearbyBikerName: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    nearbyBikerItemActive: {
+        borderColor: '#00FD3F',
+        borderWidth: 2,
+        backgroundColor: 'rgba(0, 253, 63, 0.08)',
+    },
+    ratingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 3,
+    },
+    ratingText: {
+        color: '#7F8C8D',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    bookRideBtnPremium: {
+        flexDirection: 'row',
+        height: 58,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#A8E05F',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+
+    // Bidding UI Styles
+    biddingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'flex-end',
+        zIndex: 1000,
+    },
+    biddingContent: {
+        backgroundColor: 'rgba(28, 28, 30, 0.98)',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        padding: 24,
+        maxHeight: height * 0.7,
+    },
+    biddingHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    statusDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#A8E05F',
+        marginRight: 12,
+    },
+    biddingTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#FFFFFF',
+        flex: 1,
+    },
+    bidsScroll: {
+        marginBottom: 20,
+    },
+    emptyBids: {
+        paddingVertical: 50,
+        alignItems: 'center',
+    },
+    emptyBidsText: {
+        color: '#8A8A8E',
+        marginTop: 16,
+        fontSize: 16,
+    },
+    bidCard: {
+        backgroundColor: '#2C2C2E',
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 12,
+    },
+    bidRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    bidInfo: {
+        flex: 1,
+        marginLeft: 16,
+    },
+    bidName: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: '#FFFFFF',
+    },
+    // Note: There's a duplicate 'ratingRow' and 'ratingText' in the provided instruction.
+    // Assuming the intention is to keep the existing one for the main UI and add these for bidding context if different.
+    // If they are meant to replace the existing ones, the instruction should be clearer.
+    // For now, I'll include them as they are in the instruction, assuming they are specific to bid cards.
+    ratingRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    ratingText: {
+        color: '#FFD700',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    bidAction: {
+        alignItems: 'flex-end',
+    },
+    bidPrice: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#A8E05F',
+        marginBottom: 8,
+    },
+    acceptBidBtn: {
+        borderRadius: 12,
+        height: 36,
+    },
+    cancelBiddingBtn: {
+        borderRadius: 16,
+        height: 52,
+        borderColor: '#3A3A3C',
+    },
+    bookRideTextPremium: {
+        color: '#000',
+        fontSize: 19,
+        fontWeight: '900',
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    modernBikerMarker: {
+        width: 38,
+        height: 38,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    markerBlackCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#00FD3F',
+        shadowColor: '#00FD3F',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.9,
+        shadowRadius: 5,
+        elevation: 8,
+    },
+    markerCenterDot: {
+        position: 'absolute',
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#00FD3F',
+        bottom: -2,
+    },
+    confirmBikerBtn: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        height: 56,
+        elevation: 8,
+        shadowColor: '#00FD3F',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+    },
+    confirmBikerGradient: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    confirmBikerContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+    },
+    confirmBikerText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: 'normal',
+    },
+    cancelBikerBtn: {
+        marginTop: 12,
+        alignItems: 'center',
+        paddingVertical: 10,
+    },
+    cancelBikerText: {
+        color: '#8E8E93',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    showNearbyBtn: {
+        backgroundColor: 'rgba(168, 224, 95, 0.1)',
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(168, 224, 95, 0.3)',
+    },
+    showNearbyText: {
+        color: '#A8E05F',
+        fontWeight: '700',
     },
 });
 

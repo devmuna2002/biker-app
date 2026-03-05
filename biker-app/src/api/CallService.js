@@ -1,9 +1,9 @@
 // CallService.js
 import { io } from 'socket.io-client';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AudioModule } from 'expo-audio';
 import SheetService from './SheetService';
-
-const SOCKET_URL = SheetService.resolveApiUrl ? SheetService.resolveApiUrl() : 'http://192.168.1.2:3003';
 
 class CallService {
     static socket = null;
@@ -11,110 +11,232 @@ class CallService {
     static onCallStateChange = null;
     static isWebRTCSupported = false;
     static userId = null;
+    static rtcPeerConnection = null;
+    static localStream = null;
+    static remoteStream = null;
+    static initiatorId = null;
+    static lastCalledId = null;
 
     /** Check if device supports WebRTC */
     static checkSupport() {
         try {
-            this.isWebRTCSupported = typeof global.RTCPeerConnection !== 'undefined';
+            // In React Native with react-native-webrtc, RTCPeerConnection usually exists globally
+            this.isWebRTCSupported = typeof global.RTCPeerConnection !== 'undefined' || typeof window.RTCPeerConnection !== 'undefined';
         } catch (e) {
             this.isWebRTCSupported = false;
         }
         return this.isWebRTCSupported;
     }
 
-    /** Initialize socket and auto-register user from SheetService */
-    static init() {
-        if (this.socket) return;
+    /** Initialize socket and auto-register user */
+    static async init(userId = null) {
+        if (userId) this.userId = userId;
+        const currentUserId = this.userId || SheetService.currentUser?.id;
+        if (currentUserId) this.userId = currentUserId;
 
-        this.userId = SheetService.getUserId?.();
-        if (!this.userId) {
-            console.warn('[CallService] No user ID found in SheetService');
+        if (this.socket) {
+            if (this.socket.connected && this.userId) {
+                this.socket.emit('register_call', { userId: String(this.userId) });
+            }
+            return;
         }
 
+        const url = SheetService.getApiUrl ? SheetService.getApiUrl() : 'http://192.168.1.2:3003';
+        const token = await AsyncStorage.getItem('auth_token');
+
         try {
-            this.socket = io(SOCKET_URL, {
+            this.socket = io(url, {
                 transports: ['websocket'],
                 autoConnect: true,
+                path: '/ws/tracking',
+                auth: { token }
             });
 
             this.socket.on('connect', () => {
-                console.log('[CallService] Socket connected');
                 if (this.userId) {
-                    this.socket.emit('register_call', { userId: this.userId });
+                    this.socket.emit('register_call', { userId: String(this.userId) });
                 }
             });
 
-            // Incoming call
             this.socket.on('incoming_call', (data) => {
-                const { from, callId } = data;
-                this.currentCallId = callId;
-                if (this.onCallStateChange) this.onCallStateChange('incoming', from);
+                console.log('[CallService] Incoming call:', data);
+                if (this.currentCallId && this.currentCallId !== data.callId) return; // Busy
+                this.currentCallId = data.callId;
+                this.initiatorId = data.from;
+                if (this.onCallStateChange) this.onCallStateChange('incoming');
             });
 
-            // Call ended
-            this.socket.on('call_ended', (data) => {
-                console.log('[CallService] Call ended', data);
-                this.currentCallId = null;
+            this.socket.on('call_accepted', async (data) => {
+                console.log('[CallService] Call accepted, initiating WebRTC offer');
+                if (this.onCallStateChange) this.onCallStateChange('connected');
+                await this.createPeerConnection(data.by);
+                const offer = await this.rtcPeerConnection.createOffer();
+                await this.rtcPeerConnection.setLocalDescription(offer);
+                this.socket.emit('call_offer', { to: data.by, offer, callId: this.currentCallId });
+            });
+
+            this.socket.on('call_offer', async (data) => {
+                console.log('[CallService] Received WebRTC offer');
+                await this.createPeerConnection(data.from);
+                await this.rtcPeerConnection.setRemoteDescription(new global.RTCSessionDescription(data.offer));
+                const answer = await this.rtcPeerConnection.createAnswer();
+                await this.rtcPeerConnection.setLocalDescription(answer);
+                this.socket.emit('call_answer', { to: data.from, answer, callId: this.currentCallId });
+            });
+
+            this.socket.on('call_answer', async (data) => {
+                console.log('[CallService] Received WebRTC answer');
+                if (this.rtcPeerConnection) {
+                    await this.rtcPeerConnection.setRemoteDescription(new global.RTCSessionDescription(data.answer));
+                }
+            });
+
+            this.socket.on('ice_candidate', async (data) => {
+                if (this.rtcPeerConnection) {
+                    try {
+                        await this.rtcPeerConnection.addIceCandidate(new global.RTCIceCandidate(data.candidate));
+                    } catch (e) { console.warn('[WebRTC] Candidate error', e); }
+                }
+            });
+
+            this.socket.on('call_ended', () => {
+                this.cleanUp();
                 if (this.onCallStateChange) this.onCallStateChange('idle');
             });
 
-            // Called user busy
-            this.socket.on('call_busy', (data) => {
-                console.log('[CallService] Call busy', data);
+            this.socket.on('call_busy', () => {
+                this.cleanUp();
                 if (this.onCallStateChange) this.onCallStateChange('busy');
             });
 
-            // Disconnect event
-            this.socket.on('disconnect', () => {
-                console.log('[CallService] Socket disconnected');
-                this.currentCallId = null;
-                if (this.onCallStateChange) this.onCallStateChange('idle');
-            });
         } catch (e) {
             console.log('[CallService] init error:', e.message);
         }
     }
 
-    /** Start a call to another user (auto uses registered user) */
+    static async createPeerConnection(targetId) {
+        if (this.rtcPeerConnection) return;
+
+        // Configure audio mode for call
+        await this.prepareAudioMode();
+
+        const config = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        this.rtcPeerConnection = new global.RTCPeerConnection(config);
+
+        this.rtcPeerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                this.socket.emit('ice_candidate', { to: targetId, candidate: event.candidate, callId: this.currentCallId });
+            }
+        };
+
+        this.rtcPeerConnection.onaddstream = (event) => {
+            console.log('[WebRTC] Remote stream added');
+            this.remoteStream = event.stream;
+            // In a real app, you'd attach this stream to a <RTCView> or use an audio element
+        };
+
+        // Capture local mic
+        try {
+            const stream = await global.mediaDevices.getUserMedia({ audio: true, video: false });
+            this.localStream = stream;
+            this.rtcPeerConnection.addStream(stream);
+        } catch (e) {
+            console.warn('[WebRTC] Mic access failed', e);
+        }
+    }
+
+    static async prepareAudioMode() {
+        try {
+            await AudioModule.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+                shouldDuckAndroid: true,
+                playThroughEarpieceAndroid: true, // Typically for calls
+                interruptionModeIOS: 1, // Do not mix
+            });
+        } catch (e) {
+            console.log('[CallService] AudioMode error:', e.message);
+        }
+    }
+
+    /** Start a call to another user */
     static async initiateCall(toUserId) {
-        if (!this.userId) {
-            Alert.alert('Error', 'You are not registered.');
-            return false;
-        }
+        if (!this.userId) return false;
+        if (!this.socket?.connected) return false;
 
-        if (!this.socket?.connected) {
-            Alert.alert('Error', 'Not connected. Try again.');
-            return false;
-        }
-
-        this.currentCallId = 'call-' + Date.now();
+        this.currentCallId = `call_${Date.now()}`;
+        this.lastCalledId = toUserId;
         if (this.onCallStateChange) this.onCallStateChange('calling');
 
         this.socket.emit('initiate_call', {
-            to: toUserId,
-            from: this.userId,
+            to: String(toUserId),
+            from: String(this.userId),
             callId: this.currentCallId,
         });
 
         return true;
     }
 
-    /** End the current call */
-    static endCall() {
-        if (this.currentCallId && this.socket?.connected) {
-            this.socket.emit('end_call', { callId: this.currentCallId });
-        }
-        this.currentCallId = null;
-        if (this.onCallStateChange) this.onCallStateChange('idle');
+    /** Accept an incoming call */
+    static async acceptCall() {
+        if (!this.socket?.connected || !this.currentCallId) return;
+        this.socket.emit('accept_call', {
+            callId: this.currentCallId,
+            to: String(this.userId),
+            initiatorId: String(this.initiatorId),
+        });
+        if (this.onCallStateChange) this.onCallStateChange('connected');
     }
 
-    /** Disconnect socket completely */
-    static disconnect() {
-        this.endCall();
-        if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
+    /** End call and clean up */
+    static endCall() {
+        if (this.socket?.connected && this.currentCallId) {
+            this.socket.emit('end_call', {
+                callId: this.currentCallId,
+                targetId: String(this.initiatorId || this.lastCalledId)
+            });
         }
+        this.cleanUp();
+        if (this.onCallStateChange) this.onCallStateChange('ended');
+        setTimeout(() => { if (this.onCallStateChange) this.onCallStateChange('idle'); }, 1500);
+    }
+
+    static toggleMute(muted) {
+        if (this.localStream) {
+            this.localStream.getAudioTracks().forEach(track => {
+                track.enabled = !muted;
+            });
+        }
+    }
+
+    static async toggleSpeaker(on) {
+        try {
+            await AudioModule.setAudioModeAsync({
+                playThroughEarpieceAndroid: !on,
+                playsInSilentModeIOS: true,
+                allowsRecordingIOS: true,
+            });
+        } catch (e) {
+            console.warn('[CallService] Speaker toggle failed', e);
+        }
+    }
+
+    static cleanUp() {
+        this.currentCallId = null;
+        this.initiatorId = null;
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(t => t.stop());
+            this.localStream = null;
+        }
+        if (this.rtcPeerConnection) {
+            this.rtcPeerConnection.close();
+            this.rtcPeerConnection = null;
+        }
+        // Reset audio mode
+        AudioModule.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => { });
     }
 }
 

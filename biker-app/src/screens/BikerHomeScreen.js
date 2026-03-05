@@ -1,17 +1,19 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Dimensions, Alert, TouchableOpacity, Linking, ScrollView } from 'react-native';
+import { View, StyleSheet, Dimensions, Alert, TouchableOpacity, Linking, ScrollView, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withRepeat, withDelay, withSpring } from 'react-native-reanimated';
 import { Text, Surface, Switch, Button, Avatar, IconButton, useTheme, Divider, Badge, Portal, Modal } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import MapView, { PROVIDER_GOOGLE, Polyline, Marker } from 'react-native-maps';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as SafeAreaContext from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import SheetService from '../api/SheetService';
 import CallService from '../api/CallService';
 import TelemetryOverlay from '../components/TelemetryOverlay';
 import { bi } from '../components/AppIcon';
+import InAppCallUI from '../components/InAppCallUI';
 import mapStyle from '../theme/mapStyle.json';
 
 const { width, height } = Dimensions.get('window');
@@ -44,7 +46,7 @@ const BikerHomeScreen = () => {
     const navigation = useNavigation();
     const mapRef = useRef(null);
     const socketRef = useRef(null);
-    const insets = useSafeAreaInsets();
+    const insets = SafeAreaContext.useSafeAreaInsets ? SafeAreaContext.useSafeAreaInsets() : { top: 0, bottom: 0, left: 0, right: 0 };
 
     const [isOnline, setIsOnline] = useState(false);
     const [activeJob, setActiveJob] = useState(null);
@@ -220,7 +222,7 @@ const BikerHomeScreen = () => {
         };
 
         load();
-        const interval = setInterval(load, 45000);
+        const interval = setInterval(load, 15000);
         return () => {
             cancelled = true;
             clearInterval(interval);
@@ -233,7 +235,7 @@ const BikerHomeScreen = () => {
         try {
             const res = await SheetService.getBikerSubscriptions(user.id, { timeout: 60000 });
             if (res?.data) {
-                const subs = Array.isArray(res.data) ? res.data : res.data.subscriptions || [];
+                const subs = (Array.isArray(res.data) ? res.data : res.data.subscriptions || []).filter(s => !!s);
                 const now = new Date();
                 subs.forEach(s => {
                     if (s.expiryDate && new Date(s.expiryDate) < now) {
@@ -325,8 +327,8 @@ const BikerHomeScreen = () => {
                 // initial subscription from backend
                 if (me?.data) {
                     setSubscription({
-                        subscriptionStatus: me.data.subscriptionStatus,
-                        expiryDate: me.data.subscriptionExpiryDate,
+                        subscriptionStatus: me.data?.subscriptionStatus,
+                        expiryDate: me.data?.subscriptionExpiryDate,
                     });
                 }
             } catch { }
@@ -338,6 +340,11 @@ const BikerHomeScreen = () => {
     useEffect(() => {
         if (user?.id) {
             CallService.init(user.id);
+            CallService.onCallStateChange = (state) => {
+                setCallState(state);
+                if (state === 'incoming' || state === 'calling') setIsCalling(true);
+                else if (state === 'idle' || state === 'ended' || state === 'busy') setIsCalling(false);
+            };
         }
     }, [user?.id]);
 
@@ -357,6 +364,7 @@ const BikerHomeScreen = () => {
         serviceType: o.serviceType,
         customerName: o.customer?.name || o.customerName,
         customerPhone: o.customer?.phone || o.customerPhone,
+        customerId: o.customer?.id || o.userId || o.customerId,
         notes: o.notes,
         itemDescription: o.itemDescription || o.description,
         providerName: o.providerName || o.pickupStoreName,
@@ -375,7 +383,15 @@ const BikerHomeScreen = () => {
                 return;
             }
 
-            if (socketRef.current?.connected) return;
+            if (socketRef.current?.connected) {
+                if (user?.id) {
+                    socketRef.current.emit('register', {
+                        userId: user.id,
+                        userType: 'driver'
+                    });
+                }
+                return;
+            }
 
             try {
                 const socket = await SheetService.connectTrackingSocket();
@@ -418,6 +434,25 @@ const BikerHomeScreen = () => {
                         return [...prev, normalized];
                     });
                 });
+                // Listen for order status updates
+                socket.on('order_status_update', (data) => {
+                    if (data?.status === 'cancelled') {
+                        setPendingOrders(prev => prev.filter(o => String(o.orderId) !== String(data.orderId)));
+                        setActiveJob(prev => {
+                            if (prev && String(prev.orderId) === String(data.orderId)) {
+                                Alert.alert('Trip Cancelled', 'This trip has been cancelled by the customer.');
+                                return null;
+                            }
+                            return prev;
+                        });
+                        setRouteCoords([]);
+                    }
+                });
+
+                // Listen for publicly broadcasted cancellations (before assignment)
+                socket.on('new_order_request_cancelled', (data) => {
+                    setPendingOrders(prev => prev.filter(o => String(o.orderId) !== String(data.orderId)));
+                });
             } catch (err) {
                 console.warn('[Socket] Connect failed:', err);
             }
@@ -426,6 +461,10 @@ const BikerHomeScreen = () => {
         connect();
         return () => {
             cancelled = true;
+            if (socketRef.current) {
+                socketRef.current.off('order_status_update');
+                socketRef.current.off('new_order_request_cancelled');
+            }
         };
     }, [isOnline, user?.id]);
 
@@ -438,7 +477,7 @@ const BikerHomeScreen = () => {
             return;
         }
 
-        const poll = async () => {
+        const refreshActiveJob = async () => {
             try {
                 const res = await SheetService.getDriverActiveOrder();
                 const o = res?.data?.order;
@@ -451,7 +490,9 @@ const BikerHomeScreen = () => {
 
                     // Update route if location changes
                     if (location?.latitude) {
-                        const to = o.status === 'assigned' ? o.pickup?.coords : o.dropoff?.coords;
+                        const to = o.status === 'assigned'
+                            ? (o.pickup?.coords || { lat: o.pickupLat, lng: o.pickupLng })
+                            : (o.dropoff?.coords || { lat: o.dropoffLat, lng: o.dropoffLng });
                         if (to?.lat && to?.lng) {
                             try {
                                 const url = `https://router.project-osrm.org/route/v1/driving/${location.longitude},${location.latitude};${to.lng},${to.lat}?overview=full&geometries=geojson`;
@@ -468,8 +509,9 @@ const BikerHomeScreen = () => {
             } catch { }
         };
 
-        poll();
-        interval = setInterval(poll, 6000);
+        refreshActiveJob();
+        interval = setInterval(refreshActiveJob, 10000); // Poll less frequently now that we have sockets
+        socketRef.current?.on('order_assigned', () => refreshActiveJob());
         return () => clearInterval(interval);
     }, [isOnline, location?.latitude, location?.longitude]);
 
@@ -561,6 +603,22 @@ const BikerHomeScreen = () => {
         }
     };
 
+    const handlePlaceBid = async (orderId, suggestedPriceCents, extraCents) => {
+        const bidPriceCents = (suggestedPriceCents || 0) + extraCents;
+        try {
+            const res = await SheetService.placeBid({ orderId, priceCents: bidPriceCents });
+            if (res?.success) {
+                Alert.alert('Bid Sent', `You offered $${(bidPriceCents / 100).toFixed(2)}. Wait for customer reply.`);
+                // Update local state to show bid is sent
+                setPendingOrders(prev => prev.map(o => o.orderId === orderId ? { ...o, bidSent: true, myBid: bidPriceCents } : o));
+            } else {
+                Alert.alert('Bid Failed', res?.message || 'Could not place bid.');
+            }
+        } catch (e) {
+            Alert.alert('Error', e?.message || 'Network error.');
+        }
+    };
+
     const handleAcceptOrder = async (order) => {
         const now = new Date();
         const trialActive = user?.trialExpiryDate && new Date(user.trialExpiryDate) > now;
@@ -579,31 +637,52 @@ const BikerHomeScreen = () => {
         }
 
         try {
-            await SheetService.acceptOrder(order.orderId);
+            const res = await SheetService.acceptOrder(order.orderId);
             setPendingOrders([]);
-            // Reload active job
-            const res = await SheetService.getDriverActiveOrder();
-            if (res?.data?.order) {
-                const o = res.data.order;
-                setActiveJob({
-                    orderId: o.id,
-                    status: o.status,
-                    pickup: o.pickup?.address,
-                    dropoff: o.dropoff?.address,
-                    pickupCoords: o.pickup?.coords || order.pickupCoords,
-                    dropoffCoords: o.dropoff?.coords || order.dropoffCoords,
-                    routePoints: order.routePoints,
-                    price: `$${((o.priceCents || 0) / 100).toFixed(2)}`,
-                    priceCents: o.priceCents,
-                    distanceKm: o.distanceKm,
-                    etaMinutes: o.etaMinutes,
-                    serviceType: o.serviceType,
-                    customerName: o.customer?.name || o.customerName,
-                    customerPhone: o.customer?.phone || o.customerPhone,
-                    notes: o.notes,
-                    itemDescription: o.itemDescription,
-                    providerName: o.providerName,
-                });
+
+            if (res?.success && (res?.data?.order || res?.data?.orderId)) {
+                const updatedOrder = res.data.order || order;
+                const normalized = normalizeOrder(updatedOrder);
+                setActiveJob(normalized);
+
+                // Prompt driver upon accepting job
+                setTimeout(() => {
+                    Alert.alert(
+                        'Order Accepted',
+                        'Would you like to call or message the customer?',
+                        [
+                            { text: 'Later', style: 'cancel' },
+                            {
+                                text: 'Message',
+                                onPress: () => {
+                                    if (normalized.customerId) {
+                                        navigation.navigate('Chat', {
+                                            recipientId: normalized.customerId,
+                                            recipientName: normalized.customerName || 'Customer',
+                                            orderId: normalized.orderId
+                                        });
+                                    }
+                                }
+                            },
+                            {
+                                text: 'Call',
+                                onPress: () => {
+                                    if (!normalized.customerId) return;
+                                    setIsCalling(true);
+                                    setCallState('calling');
+                                    CallService.init(user?.id);
+                                    CallService.onCallStateChange = (state) => {
+                                        setCallState(state);
+                                        if (state === 'idle' || state === 'ended') {
+                                            setIsCalling(false);
+                                        }
+                                    };
+                                    CallService.callUser(normalized.customerId);
+                                }
+                            }
+                        ]
+                    );
+                }, 600);
             }
         } catch (e) {
             Alert.alert('Accept Failed', e?.message || 'Could not accept this order.');
@@ -614,35 +693,51 @@ const BikerHomeScreen = () => {
         setPendingOrders(prev => prev.filter(o => o.orderId !== orderId));
     };
 
-    const handleCallCustomer = async () => {
-        const customerName = activeJob?.customerName || 'Customer';
-        const customerPhone = activeJob?.customerPhone;
+    const handleCallCustomer = () => {
+        if (!activeJob?.customerId) {
+            Alert.alert('Cannot call', 'Customer information missing.');
+            return;
+        }
+        setIsCalling(true);
+        setCallState('calling');
+        CallService.init(user?.id);
+        CallService.onCallStateChange = (state) => {
+            setCallState(state);
+            if (state === 'idle' || state === 'ended') {
+                setIsCalling(false);
+            }
+        };
+        CallService.initiateCall(activeJob.customerId);
+    };
 
-        if (customerPhone) {
-            Alert.alert(
-                'Call',
-                `Call ${customerName} at ${customerPhone}?`,
-                [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                        text: 'Call 📞',
-                        onPress: () => {
-                            SheetService.recordCall({
-                                orderId: activeJob?.orderId,
-                                phoneNumber: customerPhone,
-                                name: customerName,
-                                type: 'outgoing'
-                            }).catch(() => { });
-                            Linking.openURL(`tel:${customerPhone}`).catch(() => {
-                                Alert.alert('Error', 'Could not make call');
-                            });
+    const handleEndCall = () => {
+        CallService.endCall();
+        setIsCalling(false);
+        setCallState('idle');
+    };
+
+    const handleCancelJob = async () => {
+        if (!activeJob?.orderId) return;
+        Alert.alert(
+            'Cancel Job',
+            'Are you sure you want to cancel this job?',
+            [
+                { text: 'No', style: 'cancel' },
+                {
+                    text: 'Yes, Cancel',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await SheetService.cancelOrder(activeJob.orderId);
+                            setActiveJob(null);
+                            setRouteCoords([]);
+                        } catch (e) {
+                            Alert.alert('Error', e?.message || 'Failed to cancel order');
                         }
                     }
-                ]
-            );
-        } else {
-            Alert.alert('No Phone Number', 'Customer phone number is not available for this order.');
-        }
+                }
+            ]
+        );
     };
 
     const handleChatCustomer = () => {
@@ -701,48 +796,65 @@ const BikerHomeScreen = () => {
                 userInterfaceStyle="dark"
             >
                 {/* Ambient Places */}
-                {!activeJob && ambientPlaces.map(p => (
-                    <Marker
-                        key={`ambient-${p.id}`}
-                        coordinate={{ latitude: p.lat, longitude: p.lng }}
-                        title={p.name}
-                        description={p.address}
-                        tracksViewChanges={false}
-                    >
-                        <Surface style={[styles.placeMarker, { borderColor: p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F' }]} elevation={2}>
-                            <IconButton
-                                icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
-                                size={14}
-                                iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
-                                style={{ margin: 0 }}
-                            />
-                        </Surface>
-                    </Marker>
-                ))}
+                {!activeJob && ambientPlaces.map(p => {
+                    const lat = Number(p.lat);
+                    const lng = Number(p.lng);
+                    if (isNaN(lat) || isNaN(lng)) return null;
+                    return (
+                        <Marker
+                            key={`ambient-${p.id}`}
+                            coordinate={{ latitude: lat, longitude: lng }}
+                            title={p.name}
+                            description={p.address}
+                            tracksViewChanges={false}
+                        >
+                            <Surface style={[styles.placeMarker, { borderColor: p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F' }]} elevation={2}>
+                                <IconButton
+                                    icon={bi(p.kind === 'pharmacy' ? 'medical-bag' : p.kind === 'grocery' ? 'cart' : p.kind === 'school' ? 'school' : 'silverware-fork-knife')}
+                                    size={14}
+                                    iconColor={p.kind === 'pharmacy' ? '#E74C3C' : p.kind === 'school' ? '#3498DB' : '#A8E05F'}
+                                    style={{ margin: 0 }}
+                                />
+                            </Surface>
+                        </Marker>
+                    );
+                })}
 
                 {/* Active Job Markers */}
-                {activeJob && (
-                    <>
-                        <Marker
-                            coordinate={activeJob.pickupCoords}
-                            title="Pickup"
-                            description={activeJob.pickup}
-                        >
-                            <Surface style={[styles.jobMarker, { borderColor: '#2ECC71' }]} elevation={4}>
-                                <IconButton icon={bi('package-variant-closed')} size={18} iconColor="#2ECC71" style={{ margin: 0 }} />
-                            </Surface>
-                        </Marker>
-                        <Marker
-                            coordinate={activeJob.dropoffCoords}
-                            title="Dropoff"
-                            description={activeJob.dropoff}
-                        >
-                            <Surface style={[styles.jobMarker, { borderColor: '#E74C3C' }]} elevation={4}>
-                                <IconButton icon={bi('flag-checkered')} size={18} iconColor="#E74C3C" style={{ margin: 0 }} />
-                            </Surface>
-                        </Marker>
-                    </>
-                )}
+                {(() => {
+                    if (!activeJob) return null;
+                    const pLat = Number(activeJob.pickupCoords?.latitude || activeJob.pickupCoords?.lat);
+                    const pLng = Number(activeJob.pickupCoords?.longitude || activeJob.pickupCoords?.lng);
+                    const dLat = Number(activeJob.dropoffCoords?.latitude || activeJob.dropoffCoords?.lat);
+                    const dLng = Number(activeJob.dropoffCoords?.longitude || activeJob.dropoffCoords?.lng);
+
+                    return (
+                        <>
+                            {!isNaN(pLat) && !isNaN(pLng) && (
+                                <Marker
+                                    coordinate={{ latitude: pLat, longitude: pLng }}
+                                    title="Pickup"
+                                    description={activeJob.pickup}
+                                >
+                                    <Surface style={[styles.jobMarker, { borderColor: '#2ECC71' }]} elevation={4}>
+                                        <IconButton icon={bi('package-variant-closed')} size={18} iconColor="#2ECC71" style={{ margin: 0 }} />
+                                    </Surface>
+                                </Marker>
+                            )}
+                            {!isNaN(dLat) && !isNaN(dLng) && (
+                                <Marker
+                                    coordinate={{ latitude: dLat, longitude: dLng }}
+                                    title="Dropoff"
+                                    description={activeJob.dropoff}
+                                >
+                                    <Surface style={[styles.jobMarker, { borderColor: '#E74C3C' }]} elevation={4}>
+                                        <IconButton icon={bi('flag-checkered')} size={18} iconColor="#E74C3C" style={{ margin: 0 }} />
+                                    </Surface>
+                                </Marker>
+                            )}
+                        </>
+                    );
+                })()}
 
                 {routeCoords.length > 0 && (
                     <>
@@ -862,129 +974,73 @@ const BikerHomeScreen = () => {
                     {isOnline && pendingOrders.length > 0 && (
                         <ScrollView style={{ maxHeight: height * 0.45 }} showsVerticalScrollIndicator={false}>
                             {pendingOrders.map((order) => (
-                                <Surface key={order.orderId} style={[styles.pendingCard, { backgroundColor: theme.colors.surface }]} elevation={8}>
-                                    {/* Service Type Banner */}
-                                    <View style={styles.serviceTypeBanner}>
-                                        <IconButton
-                                            icon={SERVICE_ICON[order.serviceType] || bi('motorbike')}
-                                            size={20}
-                                            iconColor="#F39C12"
-                                            style={{ margin: 0 }}
-                                        />
-                                        <Text style={styles.serviceTypeText}>
-                                            {SERVICE_LABEL[order.serviceType] || order.serviceType || 'Ride Request'}
-                                        </Text>
-                                        <Text style={styles.orderIdSmall}>#{order.orderId}</Text>
+                                <View key={order.orderId} style={styles.jobCardSimplified}>
+                                    <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                                    {/* Simplified Header */}
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
+                                        <Text style={styles.jobIdText}>NEW ORDER #{order.orderId}</Text>
+                                        <Text style={[styles.priceTagStraight, { color: '#00FD3F' }]}>{order.price || '--'}</Text>
                                     </View>
 
-                                    <Divider style={{ backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 8 }} />
-
-                                    {/* Route */}
-                                    <View style={styles.routeBlock}>
-                                        <View style={styles.routeRow}>
-                                            <View style={[styles.routeDot, { backgroundColor: '#2ECC71' }]} />
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.routeRowLabel}>PICKUP</Text>
-                                                <Text style={styles.routeRowAddr} numberOfLines={2}>{order.pickup || 'Address not set'}</Text>
-                                                {order.providerName && (
-                                                    <Text style={styles.providerTag}>📍 {order.providerName}</Text>
-                                                )}
-                                            </View>
+                                    {/* Straight Route */}
+                                    <View style={styles.pendingRouteStraight}>
+                                        <View style={styles.pendingRoutePoint}>
+                                            <Text style={styles.pendingRouteLabel}>FROM</Text>
+                                            <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.pickup}</Text>
                                         </View>
-                                        <View style={styles.routeLine} />
-                                        <View style={styles.routeRow}>
-                                            <View style={[styles.routeDot, { backgroundColor: '#E74C3C' }]} />
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.routeRowLabel}>DROPOFF</Text>
-                                                <Text style={styles.routeRowAddr} numberOfLines={2}>{order.dropoff || 'Address not set'}</Text>
-                                            </View>
+                                        <View style={styles.pendingRoutePoint}>
+                                            <Text style={styles.pendingRouteLabel}>TO</Text>
+                                            <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.dropoff}</Text>
                                         </View>
                                     </View>
 
-                                    {/* Meta chips */}
-                                    <View style={styles.metaRow}>
-                                        <View style={styles.metaChip}>
-                                            <Text style={styles.metaLabel}>FARE</Text>
-                                            <Text style={[styles.metaValue, { color: '#2ECC71' }]}>{order.price || '--'}</Text>
-                                        </View>
-                                        {order.distanceKm && (
-                                            <View style={styles.metaChip}>
-                                                <Text style={styles.metaLabel}>DIST</Text>
-                                                <Text style={styles.metaValue}>{Number(order.distanceKm).toFixed(1)} km</Text>
-                                            </View>
-                                        )}
-                                        {order.etaMinutes && (
-                                            <View style={styles.metaChip}>
-                                                <Text style={styles.metaLabel}>ETA</Text>
-                                                <Text style={styles.metaValue}>{order.etaMinutes} min</Text>
-                                            </View>
-                                        )}
-                                    </View>
-
-                                    {/* Customer Info */}
-                                    {order.customerName && (
-                                        <View style={styles.customerRow}>
-                                            <Avatar.Icon size={28} icon={bi('account')} backgroundColor="#252525" color="#BDC3C7" />
-                                            <View style={{ marginLeft: 8, flex: 1 }}>
-                                                <Text style={styles.customerName}>{order.customerName}</Text>
-                                                {order.customerPhone && (
-                                                    <Text style={styles.customerPhone}>{order.customerPhone}</Text>
-                                                )}
+                                    {/* Bidding Section */}
+                                    {!order.bidSent ? (
+                                        <View style={styles.bidSection}>
+                                            <Text style={styles.bidTitle}>Suggest higher price:</Text>
+                                            <View style={styles.bidOptions}>
+                                                {[50, 100, 200, 300].map(extra => (
+                                                    <TouchableOpacity
+                                                        key={extra}
+                                                        style={styles.bidChip}
+                                                        onPress={() => handlePlaceBid(order.orderId, order.priceCents, extra)}
+                                                    >
+                                                        <Text style={styles.bidChipText}>+${(extra / 100).toFixed(1)}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
                                             </View>
                                         </View>
-                                    )}
-
-                                    {/* Notes */}
-                                    {order.notes && (
-                                        <View style={styles.notesBox}>
-                                            <Text style={styles.notesLabel}>📝 Customer Note</Text>
-                                            <Text style={styles.notesText}>{order.notes}</Text>
-                                        </View>
-                                    )}
-
-                                    {order.itemDescription && (
-                                        <View style={[styles.notesBox, { borderColor: '#2ECC7133' }]}>
-                                            <Text style={[styles.notesLabel, { color: '#2ECC71' }]}>📦 Items</Text>
-                                            <Text style={styles.notesText}>{order.itemDescription}</Text>
+                                    ) : (
+                                        <View style={[styles.bidSection, { backgroundColor: 'rgba(0, 253, 63, 0.05)', borderRadius: 12, padding: 8 }]}>
+                                            <Text style={[styles.bidTitle, { color: '#00FD3F' }]}>Bid Sent: ${(order.myBid / 100).toFixed(2)}</Text>
+                                            <Text style={{ color: '#888', fontSize: 10 }}>Waiting for customer to accept...</Text>
                                         </View>
                                     )}
 
                                     {/* Accept / Decline */}
-                                    <View style={styles.acceptRow}>
-                                        {(subscription?.subscriptionStatus === 'active' || (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date())) ? (
-                                            <>
-                                                <Button
-                                                    mode="outlined"
-                                                    textColor="#E74C3C"
-                                                    style={{ flex: 1, borderColor: '#E74C3C', borderRadius: 12 }}
-                                                    onPress={() => handleDeclineOrder(order.orderId)}
-                                                >
-                                                    Decline
-                                                </Button>
-                                                <Button
-                                                    mode="contained"
-                                                    buttonColor="#2ECC71"
-                                                    textColor="#000"
-                                                    style={{ flex: 2, borderRadius: 12, marginLeft: 10 }}
-                                                    onPress={() => handleAcceptOrder(order)}
-                                                >
-                                                    ✓ Accept
-                                                </Button>
-                                            </>
-                                        ) : (
-                                            <Button
-                                                mode="contained"
-                                                buttonColor="#F39C12"
-                                                textColor="#000"
-                                                style={{ flex: 1, borderRadius: 12 }}
-                                                onPress={() => navigation.navigate('Subscription')}
-                                                icon={bi('lock')}
-                                            >
-                                                Subscribe to Accept
-                                            </Button>
-                                        )}
+                                    <View style={styles.acceptRowStraight}>
+                                        <Button
+                                            mode="outlined"
+                                            textColor="#BBB"
+                                            style={styles.declineBtnStraight}
+                                            labelStyle={{ fontSize: 13 }}
+                                            onPress={() => handleDeclineOrder(order.orderId)}
+                                        >
+                                            Decline
+                                        </Button>
+                                        <Button
+                                            mode="contained"
+                                            buttonColor="#2ECC71"
+                                            textColor="#000"
+                                            style={styles.acceptBtnStraight}
+                                            labelStyle={{ fontWeight: 'bold' }}
+                                            onPress={() => handleAcceptOrder(order)}
+                                            disabled={order.bidSent}
+                                        >
+                                            {order.bidSent ? 'Bidding...' : 'Accept'}
+                                        </Button>
                                     </View>
-                                </Surface>
+                                </View>
                             ))}
                         </ScrollView>
                     )}
@@ -1058,20 +1114,20 @@ const BikerHomeScreen = () => {
                             <>
                                 <View style={styles.subscriptionSection}>
                                     <Text style={styles.subscriptionLabel}>Current Plan</Text>
-                                    <Text style={[styles.subscriptionAmount, { color: subscription.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }]}>
-                                        {String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1)}
+                                    <Text style={[styles.subscriptionAmount, { color: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }]}>
+                                        {String(subscription?.subscriptionType || 'Plan').charAt(0).toUpperCase() + String(subscription?.subscriptionType || 'Plan').slice(1)}
                                     </Text>
                                 </View>
                                 <View style={styles.subscriptionSection}>
                                     <Text style={styles.subscriptionLabel}>Status</Text>
-                                    <Text style={[styles.subscriptionAmount, { color: subscription.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }]}>
-                                        {String(subscription.subscriptionStatus).charAt(0).toUpperCase() + String(subscription.subscriptionStatus).slice(1)}
+                                    <Text style={[styles.subscriptionAmount, { color: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }]}>
+                                        {String(subscription?.subscriptionStatus || 'Inactive').charAt(0).toUpperCase() + String(subscription?.subscriptionStatus || 'Inactive').slice(1)}
                                     </Text>
                                 </View>
                                 <View style={styles.subscriptionSection}>
                                     <Text style={styles.subscriptionLabel}>Amount</Text>
                                     <Text style={[styles.subscriptionAmount, { color: theme.colors.secondary }]}>
-                                        ${((subscription.amount || 0) / 100).toFixed(2)}
+                                        ${((subscription?.amount || 0) / 100).toFixed(2)}
                                     </Text>
                                 </View>
                                 {subscription.expiryDate && (
@@ -1147,151 +1203,65 @@ const BikerHomeScreen = () => {
             {/* Active Job State */}
             {activeJob && (
                 <View style={styles.activeJobContainer}>
-                    <TelemetryOverlay currentSpeed={currentSpeed} speedLimit={60} />
-
-                    <Surface style={styles.jobCard} elevation={12}>
-                        {/* Status Banner */}
-                        <View style={styles.statusBanner}>
-                            <View style={[styles.statusDot, { backgroundColor: activeJob.status === 'in_transit' ? '#3498DB' : activeJob.status === 'completed' ? '#2ECC71' : '#F39C12' }]} />
-                            <Text style={styles.statusBannerText}>{getStatusLabel(activeJob.status)}</Text>
-                            <Text style={styles.orderIdBadge}>#{activeJob.orderId}</Text>
-                        </View>
-
-                        {/* Service Type */}
-                        {activeJob.serviceType && (
-                            <View style={styles.serviceTypeRow}>
-                                <IconButton
-                                    icon={SERVICE_ICON[activeJob.serviceType] || bi('motorbike')}
-                                    size={16}
-                                    iconColor="#F39C12"
-                                    style={{ margin: 0 }}
-                                />
-                                <Text style={styles.serviceTypeChip}>
-                                    {SERVICE_LABEL[activeJob.serviceType] || activeJob.serviceType}
-                                </Text>
-                            </View>
-                        )}
-
-                        <Divider style={{ backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 8 }} />
-
-                        {/* Route Info */}
-                        <View style={styles.routeBlock}>
-                            <View style={styles.routeRow}>
-                                <View style={[styles.routeDot, { backgroundColor: '#2ECC71' }]} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.routeRowLabel}>PICKUP</Text>
-                                    <Text style={styles.routeRowAddr} numberOfLines={2}>{activeJob.pickup || 'Address not set'}</Text>
-                                    {activeJob.providerName && (
-                                        <Text style={styles.providerTag}>📍 From: {activeJob.providerName}</Text>
-                                    )}
+                    <BlurView intensity={90} tint="dark" style={styles.jobCardSimplified}>
+                        {/* Compact Header */}
+                        <View style={styles.jobHeaderCompact}>
+                            <View>
+                                <Text style={styles.jobIdText}>Order #{activeJob.orderId}</Text>
+                                <View style={styles.statusPillFancy}>
+                                    <View style={[styles.statusPulse, { backgroundColor: activeJob.status === 'assigned' ? '#F1C40F' : '#00FD3F' }]} />
+                                    <Text style={styles.statusPillTextFancy}>{getStatusLabel(activeJob.status)}</Text>
                                 </View>
                             </View>
-                            <View style={styles.routeLine} />
-                            <View style={styles.routeRow}>
-                                <View style={[styles.routeDot, { backgroundColor: '#E74C3C' }]} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.routeRowLabel}>DROPOFF</Text>
-                                    <Text style={styles.routeRowAddr} numberOfLines={2}>{activeJob.dropoff || 'Address not set'}</Text>
-                                </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                                <Text style={styles.essentialValuePrice}>{activeJob.price || '--'}</Text>
+                                <Text style={styles.priceLabelSmall}>EARNINGS</Text>
                             </View>
                         </View>
 
-                        {/* Meta Row */}
-                        <View style={styles.metaRow}>
-                            <View style={styles.metaChip}>
-                                <Text style={styles.metaLabel}>Fare</Text>
-                                <Text style={[styles.metaValue, { color: '#2ECC71' }]}>{activeJob.price || '--'}</Text>
+                        {/* Straight Route Info */}
+                        <View style={styles.routeSectionStraight}>
+                            <View style={[styles.routePointStraight, { marginBottom: 12 }]}>
+                                <View style={styles.pickupDotFancy} />
+                                <Text style={styles.routeValueStraight} numberOfLines={1}>{activeJob.pickup}</Text>
                             </View>
-                            {activeJob.distanceKm && (
-                                <View style={styles.metaChip}>
-                                    <Text style={styles.metaLabel}>Distance</Text>
-                                    <Text style={styles.metaValue}>{Number(activeJob.distanceKm).toFixed(1)} km</Text>
-                                </View>
-                            )}
-                            {activeJob.etaMinutes && (
-                                <View style={styles.metaChip}>
-                                    <Text style={styles.metaLabel}>ETA</Text>
-                                    <Text style={styles.metaValue}>{activeJob.etaMinutes} min</Text>
-                                </View>
-                            )}
+                            <View style={styles.routePointStraight}>
+                                <View style={styles.dropoffSquareFancy} />
+                                <Text style={styles.routeValueStraight} numberOfLines={1}>{activeJob.dropoff}</Text>
+                            </View>
                         </View>
 
-                        {/* Customer Info */}
-                        {activeJob.customerName && (
-                            <View style={styles.customerRow}>
-                                <Avatar.Icon size={32} icon={bi('account')} backgroundColor="#252525" color="#BDC3C7" />
-                                <View style={{ marginLeft: 10, flex: 1 }}>
-                                    <Text style={styles.customerName}>{activeJob.customerName}</Text>
-                                    {activeJob.customerPhone && (
-                                        <Text style={styles.customerPhone}>{activeJob.customerPhone}</Text>
-                                    )}
-                                </View>
-                            </View>
-                        )}
+                        <Divider style={styles.straightDivider} />
 
-                        {/* Notes */}
-                        {activeJob.notes && (
-                            <View style={styles.notesBox}>
-                                <Text style={styles.notesLabel}>📝 Note</Text>
-                                <Text style={styles.notesText}>{activeJob.notes}</Text>
-                            </View>
-                        )}
-
-                        {activeJob.itemDescription && (
-                            <View style={[styles.notesBox, { borderColor: '#2ECC7133' }]}>
-                                <Text style={[styles.notesLabel, { color: '#2ECC71' }]}>📦 Items</Text>
-                                <Text style={styles.notesText}>{activeJob.itemDescription}</Text>
-                            </View>
-                        )}
-
-                        <Divider style={{ backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 10 }} />
-
-                        {/* call state indicator */}
-                        {callState !== 'idle' && (
-                            <Text style={{ color: '#fff', textAlign: 'center', marginBottom: 8 }}>
-                                {callState === 'calling' ? 'Calling...' :
-                                    callState === 'connected' ? 'Connected' :
-                                        callState === 'busy' ? 'Line Busy' :
-                                            'Connecting...'}
-                            </Text>
-                        )}
-
-                        {/* Action Buttons */}
-                        <View style={styles.actionRow}>
-                            {/* Call / Chat Buttons */}
-                            {isCalling ? (
-                                <TouchableOpacity
-                                    style={styles.commBtn}
-                                    onPress={() => {
-                                        CallService.endCall();
-                                        setIsCalling(false);
-                                        setCallState('idle');
-                                    }}
-                                >
-                                    <IconButton icon={bi('phone-hangup')} size={22} iconColor="#E74C3C" style={{ margin: 0 }} />
-                                    <Text style={styles.commBtnText}>Hang Up</Text>
-                                </TouchableOpacity>
-                            ) : (
-                                <TouchableOpacity style={styles.commBtn} onPress={handleCallCustomer}>
-                                    <IconButton icon={bi('phone')} size={22} iconColor="#2ECC71" style={{ margin: 0 }} />
-                                    <Text style={styles.commBtnText}>Call</Text>
-                                </TouchableOpacity>
-                            )}
-
-                            {/* Status Progression Button */}
-                            {getNextStatus(activeJob.status) && (
-                                <Button
-                                    mode="contained"
-                                    buttonColor={activeJob.status === 'in_transit' ? '#2ECC71' : '#F39C12'}
-                                    textColor="#000"
-                                    style={{ flex: 1, borderRadius: 12 }}
-                                    onPress={() => updateStatus(getNextStatus(activeJob.status))}
-                                >
-                                    {getNextActionLabel(activeJob.status)}
-                                </Button>
-                            )}
+                        {/* Essentials Only */}
+                        <View style={styles.essentialsRow}>
+                            <Text style={styles.essentialValue}>{activeJob.customerName}</Text>
                         </View>
-                    </Surface>
+
+                        {/* Straight Action Row */}
+                        <View style={styles.straightActionRow}>
+                            <TouchableOpacity style={[styles.iconActionBtn, { backgroundColor: 'rgba(0, 253, 63, 0.1)', borderColor: 'rgba(0, 253, 63, 0.2)' }]} onPress={handleCallCustomer}>
+                                <IconButton icon={bi('phone')} size={24} iconColor="#00FD3F" style={{ margin: 0 }} />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.iconActionBtn, { backgroundColor: 'rgba(52, 152, 219, 0.1)', borderColor: 'rgba(52, 152, 219, 0.2)' }]} onPress={handleChatCustomer}>
+                                <IconButton icon={bi('chat')} size={24} iconColor="#3498DB" style={{ margin: 0 }} />
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.iconActionBtn, { backgroundColor: 'rgba(231, 76, 60, 0.1)', borderColor: 'rgba(231, 76, 60, 0.2)' }]} onPress={handleCancelJob}>
+                                <IconButton icon={bi('close')} size={24} iconColor="#E74C3C" style={{ margin: 0 }} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Button
+                            mode="contained"
+                            buttonColor="#00FD3F"
+                            textColor="#000"
+                            style={[styles.primaryActionBtn, { marginTop: 12 }]}
+                            labelStyle={{ fontWeight: '900', fontSize: 13, textTransform: 'uppercase' }}
+                            onPress={() => updateStatus(getNextStatus(activeJob.status))}
+                        >
+                            {getNextActionLabel(activeJob.status) || 'Done'}
+                        </Button>
+                    </BlurView>
                 </View>
             )}
             <Portal>
@@ -1391,6 +1361,19 @@ const BikerHomeScreen = () => {
                 }
                 return null;
             })()}
+
+            <InAppCallUI
+                visible={isCalling}
+                status={callState}
+                recipientName={activeJob?.customerName || 'Customer'}
+                recipientPhoto={null}
+                onEndCall={handleEndCall}
+                onRejectCall={handleEndCall}
+                onAcceptCall={() => {
+                    CallService.acceptCall();
+                    setCallState('connected');
+                }}
+            />
         </View>
     );
 };
@@ -1399,8 +1382,34 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
     map: { ...StyleSheet.absoluteFillObject },
     radarContainer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-    pulse: { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(168, 224, 95, 0.1)', borderWidth: 1, borderColor: 'rgba(168, 224, 95, 0.3)' },
-    radarCenter: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.1)', elevation: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+    pulse: {
+        position: 'absolute',
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: 'rgba(0, 253, 63, 0.04)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(0, 253, 63, 0.4)',
+        shadowColor: '#00FD3F',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.5,
+        shadowRadius: 10,
+    },
+    radarCenter: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: '#000',
+        elevation: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#00FD3F',
+        shadowColor: '#00FD3F',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 10,
+    },
     topBar: {
         position: 'absolute',
         top: 50,
@@ -1451,21 +1460,55 @@ const styles = StyleSheet.create({
     navItem: { alignItems: 'center', flex: 1 },
     navText: { fontSize: 10, color: '#BDC3C7', fontWeight: 'bold' },
 
-    // Pending Order Card
+    // Simplified Pending Request Card
     pendingCard: {
+        backgroundColor: '#111',
         borderRadius: 20,
         padding: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: '#F39C1233',
+        borderColor: '#2ECC7133',
     },
-    serviceTypeBanner: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
-    serviceTypeText: { color: '#F39C12', fontWeight: 'bold', fontSize: 13, flex: 1, marginLeft: 4 },
-    orderIdSmall: { color: '#7F8C8D', fontSize: 11 },
-    serviceTypeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-    serviceTypeChip: { fontSize: 12, color: '#F39C12', fontWeight: '700', marginLeft: 4 },
-    acceptRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
-    providerTag: { fontSize: 11, color: '#A8E05F', marginTop: 2 },
+    pendingRouteStraight: {
+        gap: 8,
+        marginBottom: 16,
+    },
+    pendingRoutePoint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    pendingRouteLabel: {
+        color: '#444',
+        fontSize: 9,
+        fontWeight: 'bold',
+        width: 35,
+    },
+    pendingRouteValue: {
+        color: '#FFF',
+        fontSize: 13,
+        flex: 1,
+    },
+    priceTagStraight: {
+        color: '#2ECC71',
+        fontWeight: 'bold',
+        fontSize: 16,
+        marginBottom: 12,
+    },
+    acceptRowStraight: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    declineBtnStraight: {
+        flex: 1,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#444',
+    },
+    acceptBtnStraight: {
+        flex: 2,
+        borderRadius: 12,
+    },
 
     // Active Job
     activeJobContainer: { ...StyleSheet.absoluteFillObject, zIndex: 100, justifyContent: 'flex-end' },
@@ -1501,6 +1544,144 @@ const styles = StyleSheet.create({
     actionRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
     commBtn: { backgroundColor: '#1C1C1E', borderRadius: 12, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: '#333' },
     commBtnText: { color: '#BDC3C7', fontSize: 10, fontWeight: 'bold', marginTop: -2 },
+
+    // Simplified Job Card Redesigned
+    jobCardSimplified: {
+        backgroundColor: 'rgba(20, 20, 20, 0.9)',
+        borderRadius: 28,
+        marginHorizontal: 16,
+        marginBottom: Platform.OS === 'ios' ? 100 : 80,
+        padding: 22,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.4,
+        shadowRadius: 15,
+        elevation: 10,
+        overflow: 'hidden',
+    },
+    jobHeaderCompact: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    jobIdText: {
+        color: '#7f8c8d',
+        fontSize: 12,
+        fontWeight: 'bold',
+        letterSpacing: 1,
+        marginBottom: 4,
+    },
+    statusPillFancy: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 10,
+        alignSelf: 'flex-start',
+    },
+    statusPulse: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 8,
+        shadowColor: '#FFF',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 1,
+        shadowRadius: 4,
+    },
+    statusPillTextFancy: {
+        color: '#FFF',
+        fontSize: 11,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    essentialValuePrice: {
+        color: '#00FD3F',
+        fontSize: 18,
+        fontWeight: '900',
+    },
+    priceLabelSmall: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.4)',
+        fontWeight: '900',
+        marginTop: 2,
+    },
+    routeSectionStraight: {
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderRadius: 18,
+        padding: 16,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    routePointStraight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+    },
+    pickupDotFancy: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: '#00FD3F',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    dropoffSquareFancy: {
+        width: 12,
+        height: 12,
+        borderRadius: 2,
+        backgroundColor: '#FF4757',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    routeValueStraight: {
+        color: '#FFF',
+        fontSize: 15,
+        fontWeight: '600',
+        flex: 1,
+    },
+    straightDivider: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        marginVertical: 16,
+    },
+    essentialsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+        gap: 10,
+    },
+    essentialValue: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    straightActionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    iconActionBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    primaryActionBtn: {
+        flex: 1,
+        height: 48,
+        borderRadius: 14,
+        justifyContent: 'center',
+    },
 
     // Subscription Overlay
     subscriptionOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 1000, justifyContent: 'center', alignItems: 'center', padding: 20 },
@@ -1729,6 +1910,39 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         paddingVertical: 6,
         marginBottom: 10,
+    },
+    // Bidding Styles
+    bidSection: {
+        marginVertical: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.05)',
+    },
+    bidTitle: {
+        color: '#8A8A8E',
+        fontSize: 12,
+        fontWeight: '700',
+        marginBottom: 8,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    bidOptions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    bidChip: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    bidChipText: {
+        color: '#FFF',
+        fontSize: 13,
+        fontWeight: '700',
     },
 });
 

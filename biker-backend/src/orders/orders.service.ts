@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order, OrderStatus } from './order.entity';
+import { Biker } from '../bikers/biker.entity';
 
 @Injectable()
 export class OrdersService {
     constructor(
         @InjectRepository(Order)
         private ordersRepository: Repository<Order>,
+        @InjectRepository(Biker)
+        private bikersRepository: Repository<Biker>,
     ) { }
 
     findAll() {
@@ -35,17 +38,28 @@ export class OrdersService {
         });
     }
 
-    async findActiveForUser(userId: number) {
-        return this.ordersRepository.find({
-            where: [
+    async findActiveForUser(userId: number, roleFilter?: 'customer' | 'biker') {
+        const where: any[] = [];
+
+        if (!roleFilter || roleFilter === 'customer') {
+            where.push(
                 { user: { id: userId }, status: OrderStatus.PENDING_BIDS as any },
                 { user: { id: userId }, status: OrderStatus.ASSIGNED as any },
                 { user: { id: userId }, status: OrderStatus.PICKED_UP as any },
                 { user: { id: userId }, status: OrderStatus.IN_TRANSIT as any },
-                { biker: { id: userId }, status: OrderStatus.ASSIGNED as any },
-                { biker: { id: userId }, status: OrderStatus.PICKED_UP as any },
-                { biker: { id: userId }, status: OrderStatus.IN_TRANSIT as any },
-            ] as any,
+            );
+        }
+
+        if (!roleFilter || roleFilter === 'biker') {
+            where.push(
+                { biker: { user: { id: userId } }, status: OrderStatus.ASSIGNED as any },
+                { biker: { user: { id: userId } }, status: OrderStatus.PICKED_UP as any },
+                { biker: { user: { id: userId } }, status: OrderStatus.IN_TRANSIT as any },
+            );
+        }
+
+        return this.ordersRepository.find({
+            where: where as any,
             order: { createdAt: 'DESC' },
             relations: ['biker', 'biker.user', 'user'],
         });
@@ -99,6 +113,16 @@ export class OrdersService {
             status: OrderStatus.ASSIGNED,
             finalPrice,
         });
-        return this.ordersRepository.findOne({ where: { id: orderId }, relations: ['user', 'biker'] });
+        return this.ordersRepository.findOne({ where: { id: orderId } as any, relations: ['user', 'biker'] });
+    }
+
+
+    async findOneWithRelations(id: number) {
+        return this.ordersRepository.findOne({ where: { id } as any, relations: ['user', 'biker', 'biker.user'] });
+    }
+
+    async findBikerIdForUser(userId: number) {
+        const biker = await this.bikersRepository.findOne({ where: { user: { id: userId } } as any });
+        return biker;
     }
 }

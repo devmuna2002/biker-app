@@ -28,13 +28,30 @@ export class DashboardService {
         let activeOrders = [];
         let stats = { totalOrders: 0, completedOrders: 0, cancelledOrders: 0, totalEarningsCents: 0 };
 
-        if (userId > 0) {
-            user = await this.users.findOneById(userId);
-            unreadCount = await this.notifications.countUnreadForUser(userId);
+        // ── Run independent queries in parallel to avoid 60s timeouts ──
+        const [userResult, unreadResult, zoneResult, cachedNearby, recentResult] = await Promise.all([
+            userId > 0 ? this.users.findOneById(userId) : Promise.resolve(null),
+            userId > 0 ? this.notifications.countUnreadForUser(userId) : Promise.resolve(0),
+            this.zones.findZone(input.lat, input.lng),
+            this.driverCache.nearby(input.lat, input.lng, input.radiusKm, 30),
+            userId > 0
+                ? this.savedRepo.find({ where: { user: { id: userId } } as any, order: { createdAt: 'DESC' }, take: 10 })
+                : Promise.resolve([]),
+        ]);
 
-            if (user?.role === 'driver') {
-                activeOrders = await this.orders.findActiveForUser(userId);
-                const history = await this.orders.findHistoryForUser(userId, 100);
+        user = userResult;
+        unreadCount = unreadResult as number;
+        const zone = zoneResult;
+        const recent = recentResult as any[];
+
+        // Second wave: queries that depend on user
+        if (userId > 0 && user) {
+            if (user.role === 'driver') {
+                const [active, history] = await Promise.all([
+                    this.orders.findActiveForUser(userId, 'biker'),
+                    this.orders.findHistoryForUser(userId, 100),
+                ]);
+                activeOrders = active;
                 stats = {
                     totalOrders: history.length,
                     completedOrders: history.filter(o => o.status === 'completed').length,
@@ -44,15 +61,9 @@ export class DashboardService {
                         .reduce((sum, o) => sum + (o.finalPriceCents ?? o.suggestedPriceCents ?? 0), 0),
                 };
             } else {
-                activeOrders = await this.orders.findActiveForUser(userId);
+                activeOrders = await this.orders.findActiveForUser(userId, 'customer');
             }
         }
-
-        const recent = userId > 0 ? await this.savedRepo.find({
-            where: { user: { id: userId } } as any,
-            order: { createdAt: 'DESC' },
-            take: 10,
-        }) : [];
 
         let recentDestinations = recent.map((r) => ({
             id: r.id,
@@ -79,7 +90,6 @@ export class DashboardService {
                 .filter(Boolean) as any;
         }
 
-        const zone = await this.zones.findZone(input.lat, input.lng);
         const enabledServices = zone?.enabledServices || [];
         const availability = {
             zone: zone ? { id: zone.id, code: zone.code, name: zone.name } : null,
@@ -87,16 +97,15 @@ export class DashboardService {
             isAvailable: enabledServices.length > 0 || !zone,
         };
 
-        const cachedNearby = await this.driverCache.nearby(input.lat, input.lng, input.radiusKm, 30);
+        // Nearby drivers: already fetched in parallel above with locations
         const driverRows = await this.bikers.findAvailableByIds(cachedNearby.map((c) => c.driverId));
         const byId = new Map(driverRows.map((d) => [d.id, d]));
-        const locs = await Promise.all(cachedNearby.map((c) => this.driverCache.get(c.driverId)));
         const nearbyDrivers = cachedNearby
-            .map((c, idx) => {
+            .map((c) => {
                 const d = byId.get(c.driverId);
                 if (!d) return null;
-                const loc = locs[idx];
-                if (!loc) return null; // Only show drivers with a fresh live-location cache entry
+                const loc = c.loc;
+                if (!loc) return null;
                 const coords = { lat: loc.lat, lng: loc.lng };
                 return {
                     id: d.id,
@@ -108,10 +117,11 @@ export class DashboardService {
             })
             .filter(Boolean);
 
-        // Persist last known user location best-effort (only if user exists).
+        // Persist last known user location best-effort (fire-and-forget).
         if (userId > 0) {
-            await this.users.updateLastKnownLocation(userId, input.lat, input.lng);
+            this.users.updateLastKnownLocation(userId, input.lat, input.lng).catch(() => { });
         }
+
 
         return {
             success: true,

@@ -37,9 +37,9 @@ export class PaymentsService {
         const biker = await this.bikerRepo.findOne({
             where: { user: { id: Number(userOrBikerId) } } as any,
         });
-        const bikerId = biker?.id ?? (userOrBikerId as any);
+        const bikerId = biker?.id ?? Number(userOrBikerId);
         return this.feeRepo.find({
-            where: { biker: { id: bikerId } },
+            where: { biker: { id: bikerId as any } },
             order: { createdAt: 'DESC' },
         });
     }
@@ -48,9 +48,9 @@ export class PaymentsService {
         const biker = await this.bikerRepo.findOne({
             where: { user: { id: Number(userOrBikerId) } } as any,
         });
-        const bikerId = biker?.id ?? (userOrBikerId as any);
+        const bikerId = biker?.id ?? Number(userOrBikerId);
         return this.subRepo.find({
-            where: { biker: { id: bikerId } },
+            where: { biker: { id: bikerId as any } },
             order: { startDate: 'DESC' },
         });
     }
@@ -66,12 +66,14 @@ export class PaymentsService {
         const saved = await this.subRepo.save(sub);
 
         // update biker record to reflect latest subscription status/expiry
-        if (payload.subscriptionStatus) biker.subscriptionStatus = payload.subscriptionStatus as string;
-        if (payload.expiryDate) biker.subscriptionExpiryDate = new Date(payload.expiryDate);
-        if (biker.isOnline && biker.subscriptionStatus === 'active') {
-            biker.isAvailable = true;
+        if (biker) {
+            if (payload.subscriptionStatus) biker.subscriptionStatus = payload.subscriptionStatus as string;
+            if (payload.expiryDate) biker.subscriptionExpiryDate = new Date(payload.expiryDate);
+            if (biker.isOnline && biker.subscriptionStatus === 'active') {
+                biker.isAvailable = true;
+            }
+            await this.bikerRepo.save(biker);
         }
-        await this.bikerRepo.save(biker);
 
         return saved;
     }

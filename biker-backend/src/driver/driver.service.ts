@@ -201,6 +201,21 @@ export class DriverService {
                 await this.sessionsRepo.save(session);
             }
 
+            // Save notification for customer
+            if ((order as any).user?.id) {
+                try {
+                    await this.ordersRepo.manager.insert('notifications', {
+                        userId: (order as any).user.id,
+                        type: 'delivery',
+                        message: `Your booking #${order.id} has been completed!`,
+                        isRead: false,
+                        createdAt: new Date(),
+                    });
+                } catch (e) {
+                    // Ignore if it fails
+                }
+            }
+
             // Notify driver + customer.
             this.realtime.emitToUser(userId, 'order_completed', {
                 orderId: order.id,
@@ -226,40 +241,62 @@ export class DriverService {
             (!biker.subscriptionExpiryDate || biker.subscriptionExpiryDate >= now);
         const hasActiveTrial = biker.trialExpiryDate && biker.trialExpiryDate >= now;
 
-        if (!hasActiveSubscription && !hasActiveTrial) {
-            throw new BadRequestException('Cannot accept orders: Your free trial has expired. Please subscribe to continue accepting orders.');
-        }
-
-        if (!biker.isOnline || !biker.isAvailable) {
-            throw new BadRequestException('You must be online and available to accept orders');
-        }
-
         const order = await this.ordersRepo.findOne({
             where: { id: orderId } as any,
             relations: ['user', 'biker']
         });
 
         if (!order) throw new NotFoundException('Order not found');
-        if (order.biker) throw new BadRequestException('Order already assigned');
 
-        order.biker = biker;
-        order.status = OrderStatus.ASSIGNED;
-        await this.ordersRepo.save(order);
+        // If specifically assigned to THEM, we allow them to accept even if trial is expired
+        // to avoid deadlocking the booking flow they are already part of.
+        const isAssignedToThem = order.biker && order.biker.id === biker.id;
 
-        // create tracking session for live ride tracking
+        if (!hasActiveSubscription && !hasActiveTrial && !isAssignedToThem) {
+            throw new BadRequestException('Cannot accept orders: Your free trial has expired. Please subscribe to continue.');
+        }
+
+        // If it's already assigned to someone else
+        if (order.biker && order.biker.id !== biker.id) {
+            throw new BadRequestException('Order already assigned to another driver');
+        }
+
+        // If it's already assigned to THEM, we just treat it as a confirmation/re-acceptance
+        if (order.biker && order.biker.id === biker.id) {
+            // Already assigned to them, just ensure it's in the right status or just return success
+            if (order.status === OrderStatus.DRAFT) {
+                order.status = OrderStatus.ASSIGNED;
+                await this.ordersRepo.save(order);
+            }
+        } else {
+            // Not assigned to anybody yet
+            if (!biker.isOnline || !biker.isAvailable) {
+                throw new BadRequestException('You must be online and available to accept orders');
+            }
+            order.biker = biker;
+            order.status = OrderStatus.ASSIGNED;
+            await this.ordersRepo.save(order);
+        }
+
+        // create tracking session for live ride tracking if not already exists
         try {
-            const session = this.sessionsRepo.create({
-                order: order as any,
-                status: TrackingSessionStatus.ACTIVE,
-                startedAt: new Date(),
-            });
-            await this.sessionsRepo.save(session);
+            const existingSession = await this.sessionsRepo.findOne({ where: { order: { id: order.id } } as any });
+            if (!existingSession) {
+                const session = this.sessionsRepo.create({
+                    order: order as any,
+                    status: TrackingSessionStatus.ACTIVE,
+                    startedAt: new Date(),
+                });
+                await this.sessionsRepo.save(session);
+            }
 
-            // Set as unavailable since they now have an order
-            biker.isAvailable = false;
-            await this.bikersRepo.save(biker);
+            // Ensure availability is set to false since they are now on an order
+            if (biker.isAvailable) {
+                biker.isAvailable = false;
+                await this.bikersRepo.save(biker);
+            }
         } catch (e) {
-            console.error('[DriverService] failed to create tracking session', e?.message || e);
+            console.error('[DriverService] failed to manage tracking session or availability', e?.message || e);
         }
 
         this.realtime.emitToOrder(order.id, 'order_accepted', {
@@ -276,6 +313,10 @@ export class DriverService {
             });
         }
 
-        return { success: true, data: { orderId: order.id, status: order.status } };
+        const fullOrder = await this.ordersRepo.findOne({
+            where: { id: order.id } as any,
+            relations: ['user', 'biker', 'biker.user']
+        });
+        return { success: true, data: { order: fullOrder, orderId: order.id, status: order.status } };
     }
 }

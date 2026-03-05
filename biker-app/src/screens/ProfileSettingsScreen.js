@@ -77,7 +77,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
         try {
             const res = await SheetService.getBikerSubscriptions(user.id, { timeout: 30000 });
             if (res?.data) {
-                const subs = Array.isArray(res.data) ? res.data : res.data.subscriptions || [];
+                const subs = (Array.isArray(res.data) ? res.data : res.data.subscriptions || []).filter(s => !!s);
                 const now = new Date();
                 subs.forEach(s => {
                     if (s.expiryDate && new Date(s.expiryDate) < now) {
@@ -378,8 +378,8 @@ const ProfileSettingsScreen = ({ navigation }) => {
                             {subLoading ? (
                                 <Text>Loading...</Text>
                             ) : subscription ? (
-                                <Text style={{ color: subscription.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }}>
-                                    {String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1)} – {String(subscription.subscriptionStatus).charAt(0).toUpperCase() + String(subscription.subscriptionStatus).slice(1)}
+                                <Text style={{ color: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }}>
+                                    {String(subscription?.subscriptionType || 'Plan').charAt(0).toUpperCase() + String(subscription?.subscriptionType || 'Plan').slice(1)} – {String(subscription?.subscriptionStatus || 'Inactive').charAt(0).toUpperCase() + String(subscription?.subscriptionStatus || 'Inactive').slice(1)}
                                 </Text>
                             ) : (
                                 <View>

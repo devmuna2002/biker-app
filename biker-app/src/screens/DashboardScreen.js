@@ -29,16 +29,16 @@ const feeStatusColor = (status, theme) => {
 
 // ─── header ───────────────────────────────────────────────────────────────
 
-const HeaderSection = ({ greeting, user, navigation, theme }) => (
+const HeaderSection = ({ greeting, user, navigation, theme, onRefresh, refreshing }) => (
     <View style={styles.headerContainer}>
         <View style={styles.headerLeft}>
             <Text style={[styles.greetingText, { color: theme.colors.secondaryText }]}>{greeting}</Text>
             <Text style={[styles.userNameText, { color: theme.colors.text }]}>{user.name || 'Driver'}</Text>
         </View>
         <View style={styles.headerRight}>
-            <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.headerBtnWrap}>
+            <TouchableOpacity onPress={onRefresh} style={styles.headerBtnWrap} disabled={refreshing}>
                 <Surface style={[styles.headerBtn, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                    <IconButton icon={bi('bell-outline')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} />
+                    <IconButton icon={bi('sync')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} loading={refreshing} />
                 </Surface>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => navigation.navigate('ProfileSettings')} style={styles.headerBtnWrap}>
@@ -230,7 +230,13 @@ const DashboardScreen = ({ navigation }) => {
         ]).finally(() => setRefreshing(false));
     }, [user?.id]);
 
-    useEffect(() => { loadData(); }, [loadData]);
+    useEffect(() => {
+        loadData();
+        const interval = setInterval(() => {
+            loadData();
+        }, 20000);
+        return () => clearInterval(interval);
+    }, [loadData]);
 
     const safeOrders = Array.isArray(orders) ? orders : [];
     const safeFees = Array.isArray(fees) ? fees : [];
@@ -271,7 +277,7 @@ const DashboardScreen = ({ navigation }) => {
 
     const renderItem = ({ item }) => {
         switch (item.type) {
-            case 'header': return <HeaderSection greeting={greeting} user={user} navigation={navigation} theme={theme} />;
+            case 'header': return <HeaderSection greeting={greeting} user={user} navigation={navigation} theme={theme} onRefresh={loadData} refreshing={refreshing} />;
             case 'earnings': return <EarningsBanner totalEarnings={totalEarnings} totalTrips={safeOrders.length} theme={theme} />;
             case 'quickStats':
                 return (

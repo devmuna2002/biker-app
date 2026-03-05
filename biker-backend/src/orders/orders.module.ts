@@ -6,6 +6,7 @@ import { OrdersController } from './orders.controller';
 import { ApiOrdersController } from './api-orders.controller';
 import { OrderFlowService } from './order-flow.service';
 import { DriverAssignment } from './driver-assignment.entity';
+import { OrderBid } from './order-bid.entity';
 import { OrderItem } from './order-item.entity';
 import { Payment } from '../payments/payment.entity';
 import { TrackingSession } from '../tracking/tracking-session.entity';
@@ -21,7 +22,7 @@ import { SavedLocation } from '../location/saved-location.entity';
 
 @Module({
     imports: [
-        TypeOrmModule.forFeature([Order, DriverAssignment, OrderItem, Payment, TrackingSession, TrackingLog, User, Biker, SavedLocation]),
+        TypeOrmModule.forFeature([Order, DriverAssignment, OrderBid, OrderItem, Payment, TrackingSession, TrackingLog, User, Biker, SavedLocation]),
         RealtimeModule,
         ServiceCatalogModule,
         ZonesModule,

@@ -36,8 +36,8 @@ export class DriverController {
                     name: biker.user?.name,
                     email: biker.user?.email,
                 },
-                subscriptionStatus: biker.subscriptionStatus,
-                subscriptionExpiryDate: biker.subscriptionExpiryDate,
+                subscriptionStatus: biker?.subscriptionStatus || 'inactive',
+                subscriptionExpiryDate: biker?.subscriptionExpiryDate || null,
             },
         };
     }

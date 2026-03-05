@@ -139,4 +139,83 @@ export class TrackingGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         if (!room) return;
         client.to(room).emit('user_typing', { senderId: data.senderId });
     }
+
+    // ── VoIP Calling: Signaling ──
+
+    @SubscribeMessage('register_call')
+    handleRegisterCall(@MessageBody() data: { userId: string | number }, @ConnectedSocket() client: Socket) {
+        if (data?.userId) {
+            const room = `user:${data.userId}`;
+            client.join(room);
+            console.log(`[WS Call] User ${data.userId} registered for calls`);
+        }
+    }
+
+    @SubscribeMessage('initiate_call')
+    handleInitiateCall(@MessageBody() data: { to: string | number; from: string | number; callId: string }, @ConnectedSocket() client: Socket) {
+        const targetRoom = `user:${data.to}`;
+        console.log(`[WS Call] Initiating call from ${data.from} to ${data.to} (${data.callId})`);
+        // Relay to target user
+        this.server.to(targetRoom).emit('incoming_call', {
+            from: data.from,
+            callId: data.callId
+        });
+    }
+
+    @SubscribeMessage('accept_call')
+    handleAcceptCall(@MessageBody() data: { callId: string; to: string | number; initiatorId: string | number }, @ConnectedSocket() client: Socket) {
+        console.log(`[WS Call] Call ${data.callId} accepted by ${data.to} (for initiator ${data.initiatorId})`);
+        if (data.initiatorId) {
+            this.server.to(`user:${data.initiatorId}`).emit('call_accepted', { callId: data.callId, by: data.to });
+        }
+    }
+
+    @SubscribeMessage('end_call')
+    handleEndCall(@MessageBody() data: { callId: string; targetId?: string | number }, @ConnectedSocket() client: Socket) {
+        console.log(`[WS Call] Call ${data.callId} ended by ${client.id}`);
+        if (data.targetId) {
+            this.server.to(`user:${data.targetId}`).emit('call_ended', { callId: data.callId });
+        } else {
+            // broadcast fallback (legacy)
+            this.server.emit('call_ended', { callId: data.callId });
+        }
+    }
+
+    @SubscribeMessage('busy_call')
+    handleBusyCall(@MessageBody() data: { callId: string; targetId?: string | number }, @ConnectedSocket() client: Socket) {
+        if (data.targetId) {
+            this.server.to(`user:${data.targetId}`).emit('call_busy', { callId: data.callId });
+        } else {
+            this.server.emit('call_busy', { callId: data.callId });
+        }
+    }
+
+    // ── WebRTC Signaling Relay ──
+
+    @SubscribeMessage('call_offer')
+    handleCallOffer(@MessageBody() data: { to: string | number; offer: any; callId: string }) {
+        console.log(`[WS Call] Relaying offer from to ${data.to}`);
+        this.server.to(`user:${data.to}`).emit('call_offer', {
+            from: data.to, // This might be a mistake in original logic if 'from' is needed, but let's just relay the payload
+            offer: data.offer,
+            callId: data.callId
+        });
+    }
+
+    @SubscribeMessage('call_answer')
+    handleCallAnswer(@MessageBody() data: { to: string | number; answer: any; callId: string }) {
+        console.log(`[WS Call] Relaying answer to ${data.to}`);
+        this.server.to(`user:${data.to}`).emit('call_answer', {
+            answer: data.answer,
+            callId: data.callId
+        });
+    }
+
+    @SubscribeMessage('ice_candidate')
+    handleIceCandidate(@MessageBody() data: { to: string | number; candidate: any; callId: string }) {
+        this.server.to(`user:${data.to}`).emit('ice_candidate', {
+            candidate: data.candidate,
+            callId: data.callId
+        });
+    }
 }

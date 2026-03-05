@@ -37,12 +37,11 @@ export class DriversController {
         if (driverIds.length > 0) {
             const rows = await this.bikers.findAvailableByIds(driverIds);
             const byId = new Map(rows.map((r) => [r.id, r]));
-            const locs = await Promise.all(cached.map((c) => this.cache.get(c.driverId)));
             drivers = cached
-                .map((c, idx) => {
+                .map((c) => {
                     const r = byId.get(c.driverId);
                     if (!r) return null;
-                    const loc = locs[idx];
+                    const loc = c.loc;
                     const coords = loc ? { lat: loc.lat, lng: loc.lng } : latLngFromPoint(r.lastKnownLocation);
                     return {
                         id: r.id,

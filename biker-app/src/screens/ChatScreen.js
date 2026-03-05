@@ -21,6 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAudioRecorder, useAudioPlayer, AudioModule, RecordingPresets } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bi } from '../components/AppIcon';
+import InAppCallUI from '../components/InAppCallUI';
 
 const AudioMessage = ({ audioUri, mine }) => {
   const theme = useTheme();
@@ -135,7 +136,7 @@ const ChatScreen = ({ route, navigation }) => {
           if (!active || senderId?.toString() === myId) return;
           setIsTyping(true);
           if (typingTimeout.current) clearTimeout(typingTimeout.current);
-          typingTimeout.current = setTimeout(() => setIsTyping(false), 2500);
+          typingTimeout.current = setTimeout(() => setIsTyping(false), 3500);
         });
 
         // Load message history from REST API
@@ -410,34 +411,17 @@ const ChatScreen = ({ route, navigation }) => {
     }
   };
 
-  const handleCall = async () => {
-    const phone = recipientPhone || route?.params?.customerPhone;
-    if (phone) {
-      Alert.alert(
-        'Call',
-        `Call ${recipientName} at ${phone}?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Call 📞',
-            onPress: () => {
-              SheetService.recordCall({
-                orderId,
-                phoneNumber: phone,
-                name: recipientName,
-                type: 'outgoing',
-              }).catch(() => { });
-
-              Linking.openURL(`tel:${phone}`).catch(() => {
-                Alert.alert('Error', 'Could not make call');
-              });
-            }
-          },
-        ]
-      );
-    } else {
-      Alert.alert('No Phone Number', `${recipientName}'s phone number is not available for this order.`);
-    }
+  const handleCall = () => {
+    setIsCalling(true);
+    setCallState('calling');
+    CallService.init();
+    CallService.onCallStateChange = (state) => {
+      setCallState(state);
+      if (state === 'idle' || state === 'ended') {
+        setIsCalling(false);
+      }
+    };
+    CallService.initiateCall(recipientId || orderId); // using recipientId if available
   };
 
   const handleEndCall = () => {
@@ -651,25 +635,15 @@ const ChatScreen = ({ route, navigation }) => {
         )}
       </KeyboardAvoidingView>
 
-      {/* In-Call Overlay */}
-      {isCalling && (
-        <View style={styles.callOverlay}>
-          <View style={styles.callCard}>
-            <Avatar.Icon size={80} icon={bi('phone')} style={{ backgroundColor: '#2ECC71' }} />
-            <Text style={styles.callName}>{recipientName}</Text>
-            <Text style={styles.callStatus}>
-              {callState === 'calling' ? 'Calling...' :
-                callState === 'connected' ? 'Connected' :
-                  callState === 'busy' ? 'Line Busy' : 'Connecting...'}
-            </Text>
-            <View style={styles.callActions}>
-              <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall}>
-                <IconButton icon={bi('phone-hangup')} size={32} iconColor="#FFF" style={{ margin: 0 }} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+      <InAppCallUI
+        visible={isCalling}
+        status={callState}
+        recipientName={recipientName}
+        recipientPhoto={null}
+        onEndCall={handleEndCall}
+        onRejectCall={handleEndCall}
+        onAcceptCall={() => setCallState('connected')}
+      />
     </SafeAreaView>
   );
 };
@@ -772,122 +746,96 @@ const styles = StyleSheet.create({
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(28,28,30,0.8)',
+    borderTopWidth: 0,
   },
   attachBtn: {
-    padding: 4,
+    padding: 2,
     justifyContent: 'center',
+    marginBottom: 4,
   },
   textInput: {
     flex: 1,
     maxHeight: 120,
-    minHeight: 44,
-    paddingHorizontal: 14,
+    minHeight: 40,
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 24,
-    backgroundColor: '#1C1C1E',
+    borderRadius: 22,
+    backgroundColor: 'rgba(40,40,42,0.6)',
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 20,
     marginHorizontal: 8,
+    color: '#FFF',
     borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
   sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   mediaButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
   },
   mediaBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mediaOptionsPopup: {
-    flexDirection: 'row',
-    backgroundColor: '#2A2A2A',
-    borderRadius: 16,
-    padding: 10,
-    marginTop: 8,
-    marginBottom: 8,
-    justifyContent: 'space-around',
-  },
-  mediaOption: {
-    alignItems: 'center',
-    padding: 8,
-  },
-  mediaOptionText: {
-    color: '#FFF',
-    fontSize: 12,
-    marginTop: 4,
+    marginRight: 4,
+    marginBottom: 2,
   },
   messageImage: {
-    width: 200,
-    height: 150,
-    borderRadius: 12,
-    marginBottom: 6,
+    width: 240,
+    height: 180,
+    borderRadius: 14,
+    marginBottom: 4,
   },
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    width: 140,
     paddingVertical: 4,
-    paddingHorizontal: 8,
-    marginBottom: 4,
   },
   audioPlayButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
   },
   audioDuration: {
-    fontSize: 14,
+    fontSize: 12,
     marginLeft: 8,
+    fontWeight: '600',
   },
-  callOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
-  },
-  callCard: {
-    alignItems: 'center',
-    padding: 30,
-  },
-  callName: {
-    color: '#FFF',
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginTop: 20,
-  },
-  callStatus: {
-    color: '#AAA',
-    fontSize: 16,
-    marginTop: 10,
-  },
-  callActions: {
+  mediaOptionsPopup: {
+    position: 'absolute',
+    bottom: 80,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(25,25,27,0.98)',
+    borderRadius: 25,
     flexDirection: 'row',
-    marginTop: 30,
+    justifyContent: 'space-around',
+    padding: 20,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  endCallBtn: {
-    backgroundColor: '#E74C3C',
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  mediaOption: {
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  mediaOptionText: {
+    color: '#BDC3C7',
+    fontSize: 11,
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  typingWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginVertical: 4,
+    marginLeft: 4,
   },
 });
 

@@ -42,6 +42,12 @@ export class ApiNotificationsController {
         return this.markRead(user, id);
     }
 
+    @Post('clear-all')
+    async clearAll(@CurrentUser() user: any) {
+        await this.notifications.deleteAllForUser(user.id);
+        return { success: true, message: 'Notifications cleared' };
+    }
+
     @Post('send')
     async sendNotification(@Body() body: { userId: number; title: string; body: string }) {
         try {

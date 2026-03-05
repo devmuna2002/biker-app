@@ -91,9 +91,13 @@ client.interceptors.response.use(
 
     // Log detailed failure for 'Network Error' or timeouts
     if (error.message === 'Network Error' || error.code === 'ECONNABORTED') {
-      console.warn(`[SheetService] ${error.code || 'ERROR'}: ${error.message} when calling ${originalRequest?.url} on ${API_URL}`);
-      if (error.code === 'ECONNABORTED') {
-        console.warn('[SheetService] Request timed out after 60s - the database or network is very slow.');
+      const isLogoutTimeout = originalRequest?.url?.includes('/logout') && error.code === 'ECONNABORTED';
+
+      if (!isLogoutTimeout) {
+        console.warn(`[SheetService] ${error.code || 'ERROR'}: ${error.message} when calling ${originalRequest?.url} on ${API_URL}`);
+        if (error.code === 'ECONNABORTED') {
+          console.warn(`[SheetService] Request timed out after ${originalRequest?.timeout || 60000}ms - the database or network is very slow.`);
+        }
       }
     }
 
@@ -291,7 +295,7 @@ const SheetService = {
 
   logout: async () => {
     try {
-      await client.post('/api/auth/logout', {}, { timeout: 1200 }).catch(() => { });
+      await client.post('/api/auth/logout', {}, { timeout: 3000 }).catch(() => { });
     } catch { }
     await AsyncStorage.removeItem(storageKeys.token);
     await AsyncStorage.removeItem(storageKeys.user);
@@ -321,6 +325,14 @@ const SheetService = {
     const res = await client.get('/api/driver/active-order');
     return res.data;
   },
+  getUserActiveOrder: async () => {
+    const res = await client.get('/api/orders/user-active');
+    return res.data;
+  },
+  cancelOrder: async (orderId) => {
+    const res = await client.post(`/api/orders/${orderId}/cancel`);
+    return res.data;
+  },
 
   updateDriverOrderStatus: async (orderId, status) => {
     const res = await client.patch(`/api/driver/orders/${orderId}/status`, { status });
@@ -339,6 +351,16 @@ const SheetService = {
 
   createOrder: async (payload) => {
     const res = await client.post('/api/orders/create', payload);
+    return res.data;
+  },
+
+  placeBid: async (payload) => {
+    const res = await client.post('/api/orders/bid', payload);
+    return res.data;
+  },
+
+  acceptBid: async (payload) => {
+    const res = await client.post('/api/orders/accept-bid', payload);
     return res.data;
   },
 
@@ -476,6 +498,11 @@ const SheetService = {
     return res.data;
   },
 
+  cancelOrder: async (orderId) => {
+    const res = await client.post(`/api/orders/${orderId}/cancel`);
+    return res.data;
+  },
+
   getCallHistory: async (userId, options) => {
     try {
       const res = await client.get(`/api/calls/biker/${userId}`, { ...(options || {}) });
@@ -583,6 +610,26 @@ const SheetService = {
     } catch (e) {
       return { success: false };
     }
+  },
+
+  clearAllNotifications: async () => {
+    try {
+      const res = await client.post('/api/notifications/clear-all');
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Failed to clear notifications' };
+    }
+  },
+
+  // ── CHAT ──────────────────────────────────────────────────
+  getChatHistory: async (params) => {
+    const res = await client.get('/api/chat/history', { params });
+    return res.data;
+  },
+
+  sendChatMessage: async (payload) => {
+    const res = await client.post('/api/chat/message', payload);
+    return res.data;
   },
 
   sendPushNotification: async (userId, title, body) => {

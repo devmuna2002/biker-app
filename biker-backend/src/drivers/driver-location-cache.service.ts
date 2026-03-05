@@ -50,7 +50,7 @@ export class DriverLocationCacheService {
         return this.mem.get(driverId) || null;
     }
 
-    async nearby(lat: number, lng: number, radiusKm: number, limit: number = 30) {
+    async nearby(lat: number, lng: number, radiusKm: number, limit: number = 30): Promise<Array<{ driverId: number; distanceKm: number; loc: DriverLoc }>> {
         if (this.redis) {
             const res = (await (this.redis as any).georadius(
                 this.geoKey,
@@ -64,16 +64,28 @@ export class DriverLocationCacheService {
                 'ASC',
             )) as Array<[string, string]>;
 
-            return (res || []).map(([id, distKm]) => ({
-                driverId: Number(id),
-                distanceKm: Number(distKm),
-            }));
+            if (!res || res.length === 0) return [];
+
+            const ids = res.map(([id]) => id);
+            const keys = ids.map(id => `driver:loc:${id}`);
+            const rawLocs = await this.redis.mget(...keys);
+
+            return res.map(([id, distKm], idx) => {
+                const raw = rawLocs[idx];
+                return {
+                    driverId: Number(id),
+                    distanceKm: Number(distKm),
+                    loc: raw ? JSON.parse(raw) : null as any
+                };
+            }).filter(item => !!item.loc);
         }
 
-        const out: Array<{ driverId: number; distanceKm: number }> = [];
+        const out: Array<{ driverId: number; distanceKm: number; loc: DriverLoc }> = [];
         for (const [driverId, loc] of this.mem.entries()) {
             const d = haversineKm({ lat, lng }, { lat: loc.lat, lng: loc.lng });
-            if (d <= radiusKm) out.push({ driverId, distanceKm: Math.round(d * 100) / 100 });
+            if (d <= radiusKm) {
+                out.push({ driverId, distanceKm: Math.round(d * 100) / 100, loc });
+            }
         }
         out.sort((a, b) => a.distanceKm - b.distanceKm);
         return out.slice(0, limit);
