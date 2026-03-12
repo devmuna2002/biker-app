@@ -41,7 +41,7 @@ class CallService {
             return;
         }
 
-        const url = SheetService.getApiUrl ? SheetService.getApiUrl() : 'http://192.168.1.2:3003';
+        const url = SheetService.getApiUrl ? SheetService.getApiUrl() : 'http://192.168.100.145:3003';
         const token = await AsyncStorage.getItem('auth_token');
 
         try {
@@ -69,6 +69,16 @@ class CallService {
             this.socket.on('call_accepted', async (data) => {
                 console.log('[CallService] Call accepted, initiating WebRTC offer');
                 if (this.onCallStateChange) this.onCallStateChange('connected');
+
+                // Auto-record outgoing call for the initiator
+                SheetService.recordCall({
+                    userId: String(this.userId),
+                    recipientId: String(data.by),
+                    name: 'User Call',
+                    type: 'outgoing',
+                    startTime: new Date().toISOString()
+                }).catch(err => console.error('[AGENT] Record call failed:', err));
+
                 await this.createPeerConnection(data.by);
                 const offer = await this.rtcPeerConnection.createOffer();
                 await this.rtcPeerConnection.setLocalDescription(offer);
@@ -183,6 +193,16 @@ class CallService {
     /** Accept an incoming call */
     static async acceptCall() {
         if (!this.socket?.connected || !this.currentCallId) return;
+
+        // Auto-record incoming call for the receiver
+        SheetService.recordCall({
+            userId: String(this.userId),
+            recipientId: String(this.initiatorId),
+            name: 'User Call',
+            type: 'incoming',
+            startTime: new Date().toISOString()
+        }).catch(err => console.error('[AGENT] Record call failed:', err));
+
         this.socket.emit('accept_call', {
             callId: this.currentCallId,
             to: String(this.userId),

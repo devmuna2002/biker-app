@@ -4,30 +4,30 @@ export const darkTheme = {
     ...MD3DarkTheme,
     colors: {
         ...MD3DarkTheme.colors,
-        primary: '#2980B9',
-        secondary: '#A8E05F',
-        background: '#0A0A0A',
-        surface: '#141414',
-        surfaceVariant: 'rgba(30, 30, 30, 0.8)',
+        primary: '#3277FF', // Vibrant Blue
+        secondary: '#5AC8FA', // Light Blue (iOS Style)
+        background: '#000000', // Pure black for OLED
+        surface: '#121212', // Subtle surface
+        surfaceVariant: '#1C1C1E', // Apple-style surface variant
         text: '#FFFFFF',
         onSurface: '#FFFFFF',
         onBackground: '#FFFFFF',
         secondaryText: '#8E8E93',
-        outline: '#3A3A3C',
-        placeholder: '#636366',
-        error: '#FF3B30',
-        warning: '#FF9500',
-        backdrop: 'rgba(0, 0, 0, 0.8)',
-        notification: '#FF3B30',
+        outline: '#2C2C2E', // Subtle dividers
+        placeholder: '#48484A',
+        error: '#FF453A',
+        warning: '#FF9F0A',
+        backdrop: 'rgba(0, 0, 0, 0.9)',
+        notification: '#FF453A',
         elevation: {
-            level1: '#141414',
-            level2: '#1A1A1A',
-            level3: '#202020',
-            level4: '#252525',
-            level5: '#2A2A2A',
+            level1: '#121212',
+            level2: '#1C1C1E',
+            level3: '#2C2C2E',
+            level4: '#3A3A3C',
+            level5: '#48484A',
         }
     },
-    roundness: 16,
+    roundness: 24, // Modern high-radius corners
 };
 
 export const lightTheme = {

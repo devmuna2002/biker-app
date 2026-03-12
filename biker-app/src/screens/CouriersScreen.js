@@ -8,22 +8,23 @@ const CouriersScreen = ({ navigation }) => {
     const theme = useTheme();
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]}>
             <View style={styles.header}>
-                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor={theme.colors.text} />
-                <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Couriers</Text>
+                <IconButton icon={bi('arrow-left')} size={24} onPress={() => navigation.goBack()} iconColor="#FFF" />
+                <Text style={[styles.headerTitle, { color: '#FFF' }]}>Market</Text>
                 <View style={{ width: 48 }} />
             </View>
 
             <View style={styles.list}>
-                <Surface style={[styles.card, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                    <Text style={[styles.name, { color: theme.colors.text }]}>Courier Deliveries</Text>
-                    <Text style={[styles.eta, { color: theme.colors.secondaryText }]}>Courier is a service type, not a provider list. Use the Home screen to choose Courier, pick a destination, get a fare estimate, and confirm.</Text>
+                <Surface style={[styles.card, { backgroundColor: '#121212' }]} elevation={2}>
+                    <Text style={[styles.name, { color: '#FFF' }]}>Courier Deliveries</Text>
+                    <Text style={[styles.eta, { color: 'rgba(255,255,255,0.6)' }]}>Courier is a service type, not a provider list. Use the Home screen to choose Courier, pick a destination, get a fare estimate, and confirm.</Text>
                     <Button
                         mode="contained"
-                        style={{ marginTop: 14, borderRadius: 12 }}
-                        buttonColor={theme.colors.primary}
-                        onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainApp')}
+                        style={{ marginTop: 14, borderRadius: 14 }}
+                        buttonColor="#3277FF"
+                        textColor="#000"
+                        onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Main')}
                     >
                         Go To Home
                     </Button>

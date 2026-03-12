@@ -49,7 +49,7 @@ const SubscriptionScreen = ({ navigation }) => {
 
     // Load current subscription in background
     if (user?.id) {
-      SheetService.getBikerSubscriptions(user.id, { timeout: 8000 })
+      SheetService.getBikerSubscriptions(user.id, { timeout: 30000 })
         .then(res => {
           const rawSubs = (res?.data
             ? (Array.isArray(res.data) ? res.data : res.data.subscriptions || [])
@@ -68,7 +68,7 @@ const SubscriptionScreen = ({ navigation }) => {
 
     // Load plans from server
     try {
-      const data = await SheetService.getSubscriptionPlans({ timeout: 8000 });
+      const data = await SheetService.getSubscriptionPlans({ timeout: 30000 });
       if (Array.isArray(data) && data.length > 0) {
         setPlans(data);
         if (!selectedPlan) setSelectedPlan(data[0].subscriptionType);
@@ -471,7 +471,7 @@ const SubscriptionScreen = ({ navigation }) => {
                 <View style={styles.planCardInternal}>
                   {/* Popular badge */}
                   {p.subscriptionType === 'monthly' && (
-                    <View style={[styles.popularBadge, { backgroundColor: '#F39C12' }]}>
+                    <View style={[styles.popularBadge, { backgroundColor: '#3277FF' }]}>
                       <Text style={styles.popularText}>BEST VALUE</Text>
                     </View>
                   )}
@@ -594,7 +594,7 @@ const SubscriptionScreen = ({ navigation }) => {
           onPress={handlePurchase}
           loading={loading}
           disabled={loading}
-          style={[styles.purchaseBtn, { backgroundColor: theme.colors.secondary }]}
+          style={[styles.purchaseBtn, { backgroundColor: '#3277FF' }]}
           contentStyle={styles.purchaseBtnContent}
           labelStyle={[styles.purchaseBtnLabel, { color: currentSub?.subscriptionStatus === 'active' ? theme.colors.secondaryText : '#000' }]}
         >
@@ -672,16 +672,21 @@ const styles = StyleSheet.create({
 
   // ── section ──
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 20,
     marginBottom: 4,
+    letterSpacing: 0.5,
   },
   sectionSub: {
     fontSize: 14,
-    marginBottom: 16,
+    marginBottom: 20,
+    opacity: 0.7,
   },
-
-  // ── plan cards ──
+  plansContainer: {
+    flexDirection: 'row',
+    paddingBottom: 20,
+  },
   planCard: {
     borderRadius: 16,
     padding: 0,
@@ -691,7 +696,6 @@ const styles = StyleSheet.create({
   planCardInternal: {
     borderRadius: 16,
     padding: 16,
-    overflow: 'hidden',
   },
   popularBadge: {
     position: 'absolute',
@@ -775,13 +779,17 @@ const styles = StyleSheet.create({
   paymentOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderRadius: 14,
+    padding: 16,
+    borderRadius: 20,
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.08)',
     backgroundColor: 'rgba(255,255,255,0.03)',
     gap: 8,
-    marginBottom: 4,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
   },
   paymentLabel: {
     fontSize: 15,
@@ -806,14 +814,20 @@ const styles = StyleSheet.create({
   },
   purchaseBtn: {
     borderRadius: 16,
-    elevation: 4,
+    paddingVertical: 8,
+    marginTop: 24,
+    elevation: 8,
+    shadowColor: '#3277FF',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
   },
   purchaseBtnContent: {
     height: 56,
   },
   purchaseBtnLabel: {
-    fontSize: 17,
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
 
   // ── loading ──

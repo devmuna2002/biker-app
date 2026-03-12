@@ -41,22 +41,19 @@ const Pulse = ({ delay = 0 }) => {
 const SERVICE_ICON = { bike: bi('motorbike'), courier: bi('package-variant-closed'), local_services: bi('store'), city_to_city: bi('bus') };
 const SERVICE_LABEL = { bike: 'Biker', courier: 'Send a package', local_services: 'Local services', city_to_city: 'City to City' };
 
-const BikerHomeScreen = () => {
+const BikerHomeScreen = ({ isOnline, setIsOnline, toggleOnline, subscription, setSubscription, user, setUser }) => {
     const theme = useTheme();
     const navigation = useNavigation();
     const mapRef = useRef(null);
     const socketRef = useRef(null);
     const insets = SafeAreaContext.useSafeAreaInsets ? SafeAreaContext.useSafeAreaInsets() : { top: 0, bottom: 0, left: 0, right: 0 };
 
-    const [isOnline, setIsOnline] = useState(false);
     const [activeJob, setActiveJob] = useState(null);
     const [currentSpeed, setCurrentSpeed] = useState(0);
     const [location, setLocation] = useState(null);
     const [routeCoords, setRouteCoords] = useState([]);
-    const [user, setUser] = useState(SheetService.currentUser);
     const [dashboard, setDashboard] = useState(null);
     const [showSubscription, setShowSubscription] = useState(false);
-    const [subscription, setSubscription] = useState(null);
     const [pendingOrders, setPendingOrders] = useState([]);
     const [isCalling, setIsCalling] = useState(false);
     const [callState, setCallState] = useState('idle');
@@ -64,17 +61,6 @@ const BikerHomeScreen = () => {
     const [ambientPlaces, setAmbientPlaces] = useState([]);
     const [isSyncing, setIsSyncing] = useState(false);
 
-    // Animated values for button feedback
-    const dashboardScale = useSharedValue(1);
-    const subScale = useSharedValue(1);
-    const onlineScale = useSharedValue(1);
-
-    const createPressStyle = (scaleValue) => useAnimatedStyle(() => ({
-        transform: [{ scale: withSpring(scaleValue.value, { damping: 15, stiffness: 150 }) }]
-    }));
-
-    const handlePressIn = (scaleValue) => { scaleValue.value = 0.94; };
-    const handlePressOut = (scaleValue) => { scaleValue.value = 1.0; };
 
     useEffect(() => {
         const checkTutorial = async () => {
@@ -101,7 +87,7 @@ const BikerHomeScreen = () => {
     // 1️⃣ LIVE LOCATION TRACKING
     // --------------------------
     useEffect(() => {
-        let subscription;
+        let locSubscription;
         let lastSent = 0;
 
         (async () => {
@@ -173,7 +159,7 @@ const BikerHomeScreen = () => {
             );
         })();
 
-        return () => subscription?.remove();
+        return () => locSubscription?.remove();
     }, [isOnline, activeJob?.orderId]);
 
     // Auto-follow map
@@ -206,7 +192,7 @@ const BikerHomeScreen = () => {
                     lat: location.latitude,
                     lng: location.longitude,
                     radiusKm: 5,
-                }, { timeout: 8000 });
+                }, { timeout: 30000 });
                 if (cancelled) return;
                 if (init?.success) {
                     setDashboard(curr => JSON.stringify(curr) === JSON.stringify(init.data) ? curr : init.data);
@@ -368,6 +354,7 @@ const BikerHomeScreen = () => {
         notes: o.notes,
         itemDescription: o.itemDescription || o.description,
         providerName: o.providerName || o.pickupStoreName,
+        preferredBikerId: o.preferredBikerId,
     }), []);
 
     // Socket Connection Management
@@ -515,67 +502,6 @@ const BikerHomeScreen = () => {
         return () => clearInterval(interval);
     }, [isOnline, location?.latitude, location?.longitude]);
 
-    const toggleOnline = async () => {
-        const newState = !isOnline;
-
-        // Check if user has active trial or active subscription
-        const now = new Date();
-        const trialActive = user?.trialExpiryDate && new Date(user.trialExpiryDate) > now;
-        const subActive = subscription?.subscriptionStatus === 'active';
-
-        // Show informative alert if going online without subscription/trial
-        if (newState && !subActive && !trialActive) {
-            Alert.alert(
-                'Restricted Mode',
-                'Your free trial has expired. You can view incoming requests but cannot accept them until you subscribe.',
-                [
-                    { text: 'View Requests', style: 'default' },
-                    { text: 'Subscribe', onPress: () => navigation.navigate('Subscription'), style: 'cancel' }
-                ]
-            );
-        }
-
-        setIsOnline(newState);
-        try {
-            const res = await SheetService.setDriverOnline(newState);
-
-            // If going online, send current location immediately to be 'activated everywhere'
-            if (newState && location?.latitude) {
-                try {
-                    await SheetService.updateDriverLocation({
-                        lat: location.latitude,
-                        lng: location.longitude,
-                        speedMps: 0,
-                    });
-                } catch { }
-            }
-
-            // Handle graceful failure (no biker profile, etc.)
-            if (res?.success === false) {
-                setIsOnline(!newState);
-                Alert.alert(
-                    'Cannot change status',
-                    res?.message || 'Could not update online status. Please ensure your driver profile is complete.',
-                    [
-                        { text: 'OK', style: 'default' },
-                        { text: 'Profile Settings', onPress: () => navigation.navigate('ProfileSettings') }
-                    ]
-                );
-                return;
-            }
-            // Sync the actual state from server response
-            if (res?.data?.isOnline !== undefined) {
-                setIsOnline(res.data.isOnline);
-            }
-        } catch (e) {
-            setIsOnline(!newState);
-            const errData = e?.response?.data;
-            const msg = Array.isArray(errData?.message)
-                ? errData.message.join('\n')
-                : errData?.message || e?.message || 'Unable to change online status';
-            Alert.alert('Cannot go online', msg);
-        }
-    };
 
 
     const updateStatus = async (next) => {
@@ -886,79 +812,23 @@ const BikerHomeScreen = () => {
                 </View>
             )}
 
-            {/* Sync Indicator */}
-            {isSyncing && (
-                <View style={styles.syncIndicator}>
-                    <IconButton icon={bi('cloud-sync')} size={14} iconColor="#2ECC71" style={{ margin: 0 }} />
-                    <Text style={styles.syncText}>Syncing Live Data...</Text>
-                </View>
-            )}
-
             {/* Top Bar */}
-            <View style={[styles.topBar, { top: insets.top > 0 ? insets.top + 8 : 45 }]}>
-                <Animated.View style={createPressStyle(onlineScale)}>
-                    <TouchableOpacity
-                        activeOpacity={1}
-                        onPressIn={() => handlePressIn(onlineScale)}
-                        onPressOut={() => handlePressOut(onlineScale)}
-                        onPress={toggleOnline}
-                        style={[styles.statusPill, { backgroundColor: theme.colors.surface }]}
-                    >
-                        <Text style={[styles.statusText, { color: theme.colors.text }]}>
-                            {isOnline ? (subscription?.subscriptionStatus === 'active' ? 'Online' : 'Restricted') : 'Offline'}
-                        </Text>
-                        {subscription?.subscriptionStatus !== 'active' && (
-                            <View style={[styles.subWarningDot, { backgroundColor: theme.colors.error }]} />
-                        )}
-                        <Switch
-                            value={isOnline}
-                            onValueChange={toggleOnline}
-                            color={subscription?.subscriptionStatus === 'active' ? theme.colors.secondary : theme.colors.error}
-                        />
-                    </TouchableOpacity>
-                </Animated.View>
+            <View style={[styles.topBar, { top: insets.top > 0 ? insets.top + 10 : 50 }]}>
+                <TouchableOpacity
+                    onPress={() => navigation.openDrawer()}
+                    style={styles.headerBackButton}
+                >
+                    <IconButton icon={bi('menu')} size={24} iconColor={theme.colors.text} style={{ margin: 0 }} />
+                </TouchableOpacity>
 
-                {/* Subscription Status Badge */}
-                <Animated.View style={createPressStyle(subScale)}>
-                    <TouchableOpacity
-                        style={[
-                            styles.subBadge,
-                            { borderColor: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }
-                        ]}
-                        activeOpacity={1}
-                        onPressIn={() => handlePressIn(subScale)}
-                        onPressOut={() => handlePressOut(subScale)}
-                        onPress={() => navigation.navigate('Subscription')}
-                    >
-                        <View style={[
-                            styles.subBadgeDot,
-                            { backgroundColor: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }
-                        ]} />
-                        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                            <Text style={[styles.subBadgeTitle, { fontSize: 11 }]} numberOfLines={1}>
-                                {subscription?.subscriptionStatus === 'active'
-                                    ? (subscription.subscriptionType
-                                        ? String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1)
-                                        : 'Active')
-                                    : (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date() ? 'Trial' : 'No Plan')}
-                            </Text>
-                            <Text style={{ color: 'rgba(255,255,255,0.4)', marginHorizontal: 5, fontSize: 10 }}>•</Text>
-                            <Text style={[
-                                styles.subBadgeStatus,
-                                { fontSize: 9, color: (subscription?.subscriptionStatus === 'active' || (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date())) ? '#2ECC71' : '#E74C3C' }
-                            ]}>
-                                {subscription?.subscriptionStatus === 'active'
-                                    ? (subscription.expiryDate
-                                        ? `${new Date(subscription.expiryDate).toLocaleDateString()}`
-                                        : 'Active')
-                                    : (user?.trialExpiryDate && new Date(user.trialExpiryDate) > new Date()
-                                        ? `${Math.ceil((new Date(user.trialExpiryDate) - new Date()) / (1000 * 60 * 60 * 24))}d`
-                                        : 'Off')}
-                            </Text>
-                        </View>
-                        <IconButton icon={bi('chevron-right')} size={16} iconColor="#7F8C8D" style={{ margin: 0 }} />
-                    </TouchableOpacity>
-                </Animated.View>
+                {isSyncing && (
+                    <View style={styles.inlineSync}>
+                        <IconButton icon={bi('cloud-sync')} size={16} iconColor="#2ECC71" style={{ margin: 0 }} />
+                        <Text style={styles.inlineSyncText}>Syncing...</Text>
+                    </View>
+                )}
+
+                <View style={{ flex: 1 }} />
 
                 {isOnline && pendingOrders.length > 0 && (
                     <View style={styles.pendingBadgeWrapper}>
@@ -970,135 +840,128 @@ const BikerHomeScreen = () => {
 
             {/* Floating Content when NO active job */}
             {!activeJob && (
-                <View style={[styles.bottomOverlay, { bottom: 90 + insets.bottom }]}>
-                    {isOnline && pendingOrders.length > 0 && (
-                        <ScrollView style={{ maxHeight: height * 0.45 }} showsVerticalScrollIndicator={false}>
-                            {pendingOrders.map((order) => (
-                                <View key={order.orderId} style={styles.jobCardSimplified}>
-                                    <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-                                    {/* Simplified Header */}
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
-                                        <Text style={styles.jobIdText}>NEW ORDER #{order.orderId}</Text>
-                                        <Text style={[styles.priceTagStraight, { color: '#00FD3F' }]}>{order.price || '--'}</Text>
+                <View style={styles.liveFeedContainer}>
+                    {/* Live Jobs Blurry Feed */}
+                        <BlurView intensity={60} tint="dark" style={styles.liveFeedBlur}>
+                            <View style={styles.liveFeedHeader}>
+                                <Text style={styles.liveFeedTitle}>TRENDING JOBS</Text>
+                                {isSyncing && (
+                                    <View style={styles.syncTiny}>
+                                        <View style={styles.syncPulse} />
+                                        <Text style={styles.syncTextTiny}>SYNCING</Text>
                                     </View>
-
-                                    {/* Straight Route */}
-                                    <View style={styles.pendingRouteStraight}>
-                                        <View style={styles.pendingRoutePoint}>
-                                            <Text style={styles.pendingRouteLabel}>FROM</Text>
-                                            <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.pickup}</Text>
-                                        </View>
-                                        <View style={styles.pendingRoutePoint}>
-                                            <Text style={styles.pendingRouteLabel}>TO</Text>
-                                            <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.dropoff}</Text>
-                                        </View>
-                                    </View>
-
-                                    {/* Bidding Section */}
-                                    {!order.bidSent ? (
-                                        <View style={styles.bidSection}>
-                                            <Text style={styles.bidTitle}>Suggest higher price:</Text>
-                                            <View style={styles.bidOptions}>
-                                                {[50, 100, 200, 300].map(extra => (
-                                                    <TouchableOpacity
-                                                        key={extra}
-                                                        style={styles.bidChip}
-                                                        onPress={() => handlePlaceBid(order.orderId, order.priceCents, extra)}
-                                                    >
-                                                        <Text style={styles.bidChipText}>+${(extra / 100).toFixed(1)}</Text>
-                                                    </TouchableOpacity>
-                                                ))}
-                                            </View>
-                                        </View>
-                                    ) : (
-                                        <View style={[styles.bidSection, { backgroundColor: 'rgba(0, 253, 63, 0.05)', borderRadius: 12, padding: 8 }]}>
-                                            <Text style={[styles.bidTitle, { color: '#00FD3F' }]}>Bid Sent: ${(order.myBid / 100).toFixed(2)}</Text>
-                                            <Text style={{ color: '#888', fontSize: 10 }}>Waiting for customer to accept...</Text>
-                                        </View>
-                                    )}
-
-                                    {/* Accept / Decline */}
-                                    <View style={styles.acceptRowStraight}>
-                                        <Button
-                                            mode="outlined"
-                                            textColor="#BBB"
-                                            style={styles.declineBtnStraight}
-                                            labelStyle={{ fontSize: 13 }}
-                                            onPress={() => handleDeclineOrder(order.orderId)}
-                                        >
-                                            Decline
-                                        </Button>
-                                        <Button
-                                            mode="contained"
-                                            buttonColor="#2ECC71"
-                                            textColor="#000"
-                                            style={styles.acceptBtnStraight}
-                                            labelStyle={{ fontWeight: 'bold' }}
-                                            onPress={() => handleAcceptOrder(order)}
-                                            disabled={order.bidSent}
-                                        >
-                                            {order.bidSent ? 'Bidding...' : 'Accept'}
-                                        </Button>
-                                    </View>
-                                </View>
-                            ))}
-                        </ScrollView>
-                    )}
-
-                    {isOnline && pendingOrders.length === 0 && (
-                        <Surface style={[styles.requestCard, { backgroundColor: theme.colors.surface }]} elevation={5}>
-                            <View style={styles.cardHeader}>
-                                <Text style={styles.greenTitle}>Looking for assignments</Text>
-                                <IconButton icon={bi('radar')} size={20} />
-                            </View>
-                            <Text style={[styles.userName, { color: theme.colors.text }]}>Stay online to receive orders.</Text>
-                            <Text style={styles.distanceText}>Nearby orders will appear here automatically.</Text>
-                        </Surface>
-                    )}
-
-                    {/* Profile Card */}
-                    <Surface style={[styles.profileCard, { backgroundColor: theme.colors.surface }]} elevation={3}>
-                        <View style={styles.profileHeader}>
-                            <TouchableOpacity onPress={() => navigation.navigate('ProfileSettings')}>
-                                {user?.photo ? (
-                                    <Avatar.Image size={50} source={{ uri: user.photo }} />
-                                ) : (
-                                    <Avatar.Icon size={50} icon={bi('account')} />
                                 )}
-                            </TouchableOpacity>
-                            <View style={styles.profileInfo}>
-                                <Text style={[styles.driverName, { color: theme.colors.text }]}>{user?.name || 'Biker'}</Text>
-                                <Text style={styles.driverLevel}>Driver</Text>
                             </View>
-                            <TouchableOpacity style={styles.balanceBox} onPress={() => setShowSubscription(true)}>
-                                <Text style={styles.balanceLabel}>Subscription</Text>
-                                <Text style={[styles.balanceValue, { color: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }]}>
-                                    {subscription?.subscriptionStatus ? String(subscription.subscriptionStatus).charAt(0).toUpperCase() + String(subscription.subscriptionStatus).slice(1) : 'None'}
-                                </Text>
-                                <Text style={styles.commissionDebt}>{subscription?.subscriptionType ? String(subscription.subscriptionType).charAt(0).toUpperCase() + String(subscription.subscriptionType).slice(1) : '--'}</Text>
-                            </TouchableOpacity>
-                        </View>
-                        <View style={styles.statsStrip}>
-                            <View style={styles.statBox}>
-                                <IconButton icon={bi('check-circle')} size={20} iconColor={theme.colors.secondary} style={styles.statIcon} />
-                                <Text style={styles.statVal}>{dashboard?.stats?.completedOrders ?? '--'}</Text>
-                                <Text style={styles.statLab}>Completed</Text>
-                            </View>
-                            <View style={styles.statDivider} />
-                            <View style={styles.statBox}>
-                                <IconButton icon={bi('star')} size={20} iconColor="#F1C40F" style={styles.statIcon} />
-                                <Text style={styles.statVal}>{user?.rating?.toFixed(1) || '5.0'}</Text>
-                                <Text style={styles.statLab}>Rating</Text>
-                            </View>
-                            <View style={styles.statDivider} />
-                            <View style={styles.statBox}>
-                                <IconButton icon={bi('bell')} size={20} iconColor="#BDC3C7" style={styles.statIcon} />
-                                <Text style={styles.statVal}>{dashboard?.notifications?.unreadCount ?? 0}</Text>
-                                <Text style={styles.statLab}>Alerts</Text>
-                            </View>
-                        </View>
-                    </Surface>
-                </View>
+
+                            {isOnline ? (
+                                pendingOrders.length > 0 ? (
+                                    <ScrollView
+                                        style={styles.pendingList}
+                                        showsVerticalScrollIndicator={false}
+                                        contentContainerStyle={{ paddingBottom: 20 }}
+                                    >
+                                        {pendingOrders.map((order) => (
+                                            <View key={order.orderId} style={styles.jobCardSimplified}>
+                                                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                                                {/* Simplified Header */}
+                                                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
+                                                    <Text style={styles.jobIdText}>NEW ORDER #{order.orderId}</Text>
+                                                    <Text style={[styles.priceTagStraight, { color: '#3277FF' }]}>{order.price || '--'}</Text>
+                                                </View>
+
+                                                {/* Straight Route */}
+                                                <View style={styles.pendingRouteStraight}>
+                                                    <View style={styles.pendingRoutePoint}>
+                                                        <Text style={styles.pendingRouteLabel}>FROM</Text>
+                                                        <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.pickup}</Text>
+                                                    </View>
+                                                    <View style={styles.pendingRoutePoint}>
+                                                        <Text style={styles.pendingRouteLabel}>TO</Text>
+                                                        <Text style={styles.pendingRouteValue} numberOfLines={1}>{order.dropoff}</Text>
+                                                    </View>
+                                                </View>
+
+                                                {/* Biker Interaction Section */}
+                                                {order.preferredBikerId === user?.id ? (
+                                                    <View style={styles.directRequestActions}>
+                                                        <Text style={styles.directRequestTitle}>DIRECT REQUEST</Text>
+                                                        <View style={styles.acceptRowStraight}>
+                                                            <Button
+                                                                mode="outlined"
+                                                                textColor="#E74C3C"
+                                                                style={[styles.declineBtnStraight, { borderColor: '#E74C3C' }]}
+                                                                onPress={() => handleDeclineOrder(order.orderId)}
+                                                            >
+                                                                Decline
+                                                            </Button>
+                                                            <Button
+                                                                mode="contained"
+                                                                buttonColor="#00FD3F"
+                                                                textColor="#000"
+                                                                style={styles.acceptBtnStraight}
+                                                                onPress={() => handleAcceptOrder(order)}
+                                                            >
+                                                                Accept
+                                                            </Button>
+                                                        </View>
+                                                    </View>
+                                                ) : (
+                                                    <>
+                                                        {/* Bidding Section for Broadcasted Jobs */}
+                                                        {!order.bidSent ? (
+                                                            <View style={styles.bidSection}>
+                                                                <Text style={styles.bidTitle}>Offer Services:</Text>
+                                                                <View style={styles.bidOptions}>
+                                                                    {[50, 100, 200, 300].map(extra => (
+                                                                        <TouchableOpacity
+                                                                            key={extra}
+                                                                            style={styles.bidChip}
+                                                                            onPress={() => handlePlaceBid(order.orderId, order.priceCents, extra)}
+                                                                        >
+                                                                            <Text style={styles.bidChipText}>+${(extra / 100).toFixed(1)}</Text>
+                                                                        </TouchableOpacity>
+                                                                    ))}
+                                                                </View>
+                                                            </View>
+                                                        ) : (
+                                                            <View style={[styles.bidSection, { backgroundColor: 'rgba(50, 119, 255, 0.05)', borderRadius: 12, padding: 8 }]}>
+                                                                <Text style={[styles.bidTitle, { color: '#3277FF' }]}>Offer Sent: ${(order.myBid / 100).toFixed(2)}</Text>
+                                                                <Text style={{ color: '#888', fontSize: 10 }}>Waiting for customer to accept your offer...</Text>
+                                                            </View>
+                                                        )}
+
+                                                        {/* General Accept for Broadcasted Jobs */}
+                                                        <View style={styles.acceptRowStraight}>
+                                                            <Button
+                                                                mode="contained"
+                                                                buttonColor="#3277FF"
+                                                                textColor="#FFF"
+                                                                style={[styles.acceptBtnStraight, { flex: 1 }]}
+                                                                onPress={() => handleAcceptOrder(order)}
+                                                                disabled={order.bidSent}
+                                                            >
+                                                                {order.bidSent ? 'Waiting...' : 'Take Job Now'}
+                                                            </Button>
+                                                        </View>
+                                                    </>
+                                                )}
+                                            </View>
+                                        ))}
+                                    </ScrollView>
+                                ) : (
+                                    <View style={styles.emptyFeed}>
+                                        <IconButton icon={bi('radar')} size={32} iconColor="rgba(255,255,255,0.2)" />
+                                        <Text style={styles.emptyFeedText}>Waiting for new jobs...</Text>
+                                    </View>
+                                )
+                            ) : (
+                                <View style={styles.emptyFeed}>
+                                    <IconButton icon={bi('cloud-offline')} size={32} iconColor="rgba(255,255,255,0.2)" />
+                                    <Text style={styles.emptyFeedText}>Go online to see live requests</Text>
+                                </View>
+                            )}
+                        </BlurView>
+                    </View>
             )}
 
             {/* Subscription Overlay */}
@@ -1163,42 +1026,6 @@ const BikerHomeScreen = () => {
                 </View>
             )}
 
-            {/* bottom navigation: dashboard, subscription, chat, history, profile */}
-            <Surface
-                style={[
-                    styles.bottomNav,
-                    {
-                        paddingBottom: Math.max(insets.bottom, 12),
-                        height: 75 + Math.max(insets.bottom, 12)
-                    }
-                ]}
-                elevation={4}
-            >
-                <Animated.View style={[{ flex: 1 }, createPressStyle(dashboardScale)]}>
-                    <TouchableOpacity
-                        style={styles.navItem}
-                        activeOpacity={1}
-                        onPressIn={() => handlePressIn(dashboardScale)}
-                        onPressOut={() => handlePressOut(dashboardScale)}
-                        onPress={() => navigation.navigate('Dashboard')}
-                    >
-                        <IconButton icon={bi('view-dashboard')} size={24} iconColor="#BDC3C7" pointerEvents="none" />
-                        <Text style={styles.navText}>Dashboard</Text>
-                    </TouchableOpacity>
-                </Animated.View>
-                <TouchableOpacity style={styles.navItem} onPress={() => setShowSubscription(true)}>
-                    <IconButton icon={bi('credit-card')} size={24} iconColor={subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C'} />
-                    <Text style={styles.navText}>Subscription</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('RequestHistory')}>
-                    <IconButton icon={bi('history')} size={24} iconColor="#BDC3C7" />
-                    <Text style={styles.navText}>History</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('ProfileSettings')}>
-                    <IconButton icon={bi('account')} size={24} iconColor="#BDC3C7" />
-                    <Text style={styles.navText}>Profile</Text>
-                </TouchableOpacity>
-            </Surface>
 
             {/* Active Job State */}
             {activeJob && (
@@ -1404,7 +1231,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 2,
-        borderColor: '#00FD3F',
+        borderColor: '#3277FF',
         shadowColor: '#00FD3F',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.8,
@@ -1412,53 +1239,107 @@ const styles = StyleSheet.create({
     },
     topBar: {
         position: 'absolute',
-        top: 50,
-        left: 0,
-        right: 0,
+        left: 20,
+        right: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 10,
+    },
+    headerBackButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(25,25,25,0.9)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.15)',
+    },
+    statusPill: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 10,
-        gap: 8,
-        zIndex: 10
-    },
-    statusPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
         paddingHorizontal: 12,
-        paddingVertical: 5,
-        borderRadius: 15,
+        paddingVertical: 10,
+        borderRadius: 18,
         elevation: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.15)',
     },
     statusText: { fontSize: 13, fontWeight: 'bold', marginRight: 6 },
     pendingBadgeWrapper: { position: 'relative', marginLeft: 10 },
     badge: { position: 'absolute', top: 0, right: 0, backgroundColor: '#E74C3C' },
     bottomOverlay: { position: 'absolute', bottom: 90, left: 16, right: 16, zIndex: 20 },
-    requestCard: { borderRadius: 25, padding: 20, marginBottom: 15, elevation: 10 },
-    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-    greenTitle: { color: '#2ECC71', fontSize: 12, fontWeight: 'bold' },
-    userName: { fontWeight: 'bold', fontSize: 16 },
-    distanceText: { fontSize: 11, color: '#BDC3C7' },
-    profileCard: { borderRadius: 25, padding: 20, marginTop: 12 },
-    profileHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
-    profileInfo: { flex: 1, marginLeft: 12 },
-    driverName: { fontWeight: 'bold', fontSize: 18 },
-    driverLevel: { fontSize: 12, color: '#BDC3C7' },
-    balanceBox: { alignItems: 'flex-end' },
-    balanceLabel: { fontSize: 10, color: '#BDC3C7' },
-    balanceValue: { fontSize: 18, fontWeight: 'bold' },
-    commissionDebt: { fontSize: 10, color: '#A8E05F', fontWeight: 'bold' },
-    statsStrip: { flexDirection: 'row', backgroundColor: '#1C1C1E', borderRadius: 20, padding: 15, justifyContent: 'space-around', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
-    statBox: { alignItems: 'center' },
-    statIcon: { margin: 0, padding: 0 },
-    statVal: { color: '#FFF', fontWeight: 'bold', fontSize: 15 },
-    statLab: { color: '#8E8E93', fontSize: 9 },
-    statDivider: { width: 1, height: 25, backgroundColor: '#333' },
-    bottomNav: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 25, borderTopRightRadius: 25, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-start', paddingTop: 6, elevation: 20 },
-    navItem: { alignItems: 'center', flex: 1 },
-    navText: { fontSize: 10, color: '#BDC3C7', fontWeight: 'bold' },
+    
+    // Live Feed Overlay
+    liveFeedContainer: {
+        position: 'absolute',
+        top: 160,
+        left: 12,
+        right: 12,
+        height: height * 0.55,
+        zIndex: 5,
+    },
+    liveFeedBlur: {
+        flex: 1,
+        borderRadius: 24,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+    },
+    liveFeedHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 18,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.05)',
+    },
+    liveFeedTitle: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 2,
+        opacity: 0.8,
+    },
+    syncTiny: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    syncPulse: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#3277FF',
+    },
+    syncTextTiny: {
+        color: '#3277FF',
+        fontSize: 9,
+        fontWeight: 'bold',
+    },
+    pendingList: {
+        flex: 1,
+        padding: 12,
+    },
+    emptyFeed: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: 0.6,
+        paddingBottom: 40,
+    },
+    emptyFeedText: {
+        color: '#FFF',
+        fontSize: 13,
+        fontWeight: '600',
+        marginTop: 8,
+    },
 
     // Simplified Pending Request Card
     pendingCard: {
@@ -1538,8 +1419,8 @@ const styles = StyleSheet.create({
     customerRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1C1C1E', borderRadius: 14, padding: 10, marginVertical: 6 },
     customerName: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
     customerPhone: { color: '#7F8C8D', fontSize: 12 },
-    notesBox: { backgroundColor: '#1C1C1E', borderRadius: 12, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: '#F39C1233' },
-    notesLabel: { fontSize: 11, color: '#F39C12', fontWeight: 'bold', marginBottom: 3 },
+    notesBox: { backgroundColor: '#1C1C1E', borderRadius: 12, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: 'rgba(50, 119, 255, 0.2)' },
+    notesLabel: { fontSize: 11, color: '#3277FF', fontWeight: 'bold', marginBottom: 3 },
     notesText: { color: '#BDC3C7', fontSize: 13, lineHeight: 18 },
     actionRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
     commBtn: { backgroundColor: '#1C1C1E', borderRadius: 12, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: '#333' },
@@ -1601,7 +1482,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     essentialValuePrice: {
-        color: '#00FD3F',
+        color: '#3277FF',
         fontSize: 18,
         fontWeight: '900',
     },
@@ -1628,7 +1509,7 @@ const styles = StyleSheet.create({
         width: 12,
         height: 12,
         borderRadius: 6,
-        backgroundColor: '#00FD3F',
+        backgroundColor: '#3277FF',
         borderWidth: 2,
         borderColor: 'rgba(255,255,255,0.2)',
     },
@@ -1807,16 +1688,16 @@ const styles = StyleSheet.create({
         borderWidth: 3,
     },
     subBadge: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(25,25,25,0.95)',
-        borderRadius: 15,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderWidth: 1,
+        backgroundColor: 'rgba(25,25,25,0.98)',
+        borderRadius: 18,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderWidth: 1.5,
         borderColor: 'rgba(255,255,255,0.15)',
         elevation: 4,
-        maxWidth: 180,
     },
     subBadgeDot: {
         width: 8,
@@ -1866,10 +1747,10 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         zIndex: 99,
         borderWidth: 1,
-        borderColor: 'rgba(46, 204, 113, 0.3)',
+        borderColor: 'rgba(90, 200, 250, 0.3)',
     },
     syncText: {
-        color: '#2ECC71',
+        color: '#5AC8FA',
         fontSize: 11,
         fontWeight: 'bold',
     },
@@ -1943,6 +1824,22 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 13,
         fontWeight: '700',
+    },
+    directRequestActions: {
+        marginTop: 15,
+        padding: 15,
+        backgroundColor: 'rgba(0, 253, 63, 0.05)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 253, 63, 0.2)',
+    },
+    directRequestTitle: {
+        color: '#00FD3F',
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 2,
+        marginBottom: 10,
+        textAlign: 'center',
     },
 });
 

@@ -306,7 +306,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                 if (navigation.canGoBack()) {
                     navigation.goBack();
                 } else {
-                    const next = SheetService.currentUser?.role === 'biker' ? 'BikerApp' : 'Home';
+                    const next = SheetService.currentUser?.role === 'biker' ? 'BikerApp' : 'Main';
                     navigation.navigate(next);
                 }
             } else {
@@ -331,7 +331,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                         if (navigation.canGoBack()) {
                             navigation.goBack();
                         } else {
-                            const next = SheetService.currentUser?.role === 'biker' ? 'BikerApp' : 'Home';
+                            const next = SheetService.currentUser?.role === 'biker' ? 'BikerApp' : 'Main';
                             navigation.navigate(next);
                         }
                     }}
@@ -378,7 +378,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                             {subLoading ? (
                                 <Text>Loading...</Text>
                             ) : subscription ? (
-                                <Text style={{ color: subscription?.subscriptionStatus === 'active' ? '#2ECC71' : '#E74C3C' }}>
+                                <Text style={{ color: subscription?.subscriptionStatus === 'active' ? '#3277FF' : '#E74C3C' }}>
                                     {String(subscription?.subscriptionType || 'Plan').charAt(0).toUpperCase() + String(subscription?.subscriptionType || 'Plan').slice(1)} – {String(subscription?.subscriptionStatus || 'Inactive').charAt(0).toUpperCase() + String(subscription?.subscriptionStatus || 'Inactive').slice(1)}
                                 </Text>
                             ) : (
@@ -415,7 +415,7 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                 <Text style={[styles.label, { color: theme.colors.secondaryText }]}>Account: </Text>
                                 <Badge
                                     style={{
-                                        backgroundColor: '#2ECC71',
+                                        backgroundColor: '#3277FF',
                                         color: '#fff',
                                         paddingHorizontal: 10
                                     }}
@@ -754,8 +754,8 @@ const ProfileSettingsScreen = ({ navigation }) => {
                                     <Circle
                                         center={{ latitude: serviceAreaCenter.lat, longitude: serviceAreaCenter.lng }}
                                         radius={Math.max(1, Number(serviceAreaRadiusKm || 5)) * 1000}
-                                        strokeColor="rgba(0,253,63,0.6)"
-                                        fillColor="rgba(0,253,63,0.12)"
+                                        strokeColor="rgba(50, 119, 255, 0.6)"
+                                        fillColor="rgba(50, 119, 255, 0.12)"
                                     />
                                     <Marker
                                         coordinate={{ latitude: serviceAreaCenter.lat, longitude: serviceAreaCenter.lng }}
@@ -1033,6 +1033,11 @@ const styles = StyleSheet.create({
         marginTop: 4,
         fontSize: 12,
         fontWeight: '600',
+    },
+    logoutBtn: {
+        marginTop: 40,
+        borderRadius: 12,
+        borderWidth: 1.5,
     },
 });
 

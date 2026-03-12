@@ -242,7 +242,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
 
         // Navigate back to HomeScreen with valid route data
         // RouteSelection and Home are siblings in MainAppStack, so direct navigate works.
-        navigation.navigate('Home', { selectedRoute: routeData });
+        navigation.navigate('Main', { selectedRoute: routeData });
 
         // Save draft order
         try {
@@ -430,26 +430,26 @@ const RouteSelectionScreen = ({ navigation, route }) => {
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-            <View style={[styles.header, { backgroundColor: theme.colors.surface }]}>
+        <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]}>
+            <View style={[styles.header, { backgroundColor: '#000000' }]}>
                 <IconButton
-                    icon={bi('close')}
-                    size={28}
-                    onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MainApp')}
-                    iconColor={theme.colors.text}
+                    icon={bi('arrow-back')}
+                    size={24}
+                    onPress={() => navigation.goBack()}
+                    iconColor="#FFF"
                 />
-                <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{headerTitle}</Text>
+                <Text style={[styles.headerTitle, { color: '#FFF' }]}>{headerTitle}</Text>
                 <View style={{ width: 48 }} />
             </View>
             <View style={styles.content}>
-                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surface, zIndex: 1 }]}>
+                <View style={[styles.inputContainer, { backgroundColor: '#1C1C1E', zIndex: 1 }]}>
                     <View style={styles.inputRow}>
                         <View style={styles.dotContainer}>
-                            <View style={[styles.greenRing, { borderColor: theme.colors.secondary }]}>
-                                <View style={[styles.greenDot, { backgroundColor: theme.colors.secondary }]} />
+                            <View style={[styles.greenRing, { borderColor: '#5AC8FA' }]}>
+                                <View style={[styles.greenDot, { backgroundColor: '#5AC8FA' }]} />
                             </View>
                             <View style={styles.dashedLine} />
-                            <View style={[styles.blackSquare, { backgroundColor: theme.colors.primary }]} />
+                            <View style={[styles.blackSquare, { backgroundColor: '#3277FF' }]} />
                         </View>
                         <View style={styles.inputsWrapper}>
                             <View style={styles.inputBox}>
@@ -498,7 +498,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
 
                 {/* Suggestions */}
                 {suggestions.length > 0 && (
-                    <View style={{ marginHorizontal: 15, marginTop: 4, backgroundColor: theme.colors.surface, borderRadius: 12, overflow: 'hidden', maxHeight: 360 }}>
+                    <View style={{ marginHorizontal: 15, marginTop: 4, backgroundColor: '#1C1C1E', borderRadius: 12, overflow: 'hidden', maxHeight: 360 }}>
                         {suggestions.map((s, idx) => (
                             <TouchableOpacity
                                 key={s.placeId || `s-${idx}`}
@@ -529,7 +529,7 @@ const RouteSelectionScreen = ({ navigation, route }) => {
                     style={styles.pinHintButton}
                     onPress={() => navigation.goBack()}
                 >
-                    <IconButton icon={bi('map-marker-plus')} size={18} iconColor="#00C853" style={{ margin: 0 }} />
+                    <IconButton icon={bi('map-marker-plus')} size={18} iconColor="#3277FF" style={{ margin: 0 }} />
                     <Text style={styles.pinHintText}>Long-press map to pin location</Text>
                 </TouchableOpacity>
 
@@ -703,7 +703,7 @@ const styles = StyleSheet.create({
     pinButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#00C853',
+        backgroundColor: '#3277FF',
         paddingVertical: 10,
         paddingHorizontal: 20,
         borderRadius: 25,
@@ -719,7 +719,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0, 200, 83, 0.15)',
+        backgroundColor: 'rgba(50, 119, 255, 0.15)',
         paddingVertical: 8,
         paddingHorizontal: 15,
         borderRadius: 20,
@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     pinHintText: {
-        color: '#00C853',
+        color: '#5AC8FA',
         fontSize: 13,
         fontWeight: '500',
         marginLeft: 5,

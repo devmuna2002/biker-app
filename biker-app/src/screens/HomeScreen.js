@@ -50,12 +50,20 @@ const HomeScreen = () => {
     const [ambientPlaces, setAmbientPlaces] = useState([]);
     const [isCalling, setIsCalling] = useState(false);
     const [callState, setCallState] = useState('idle');
+    const [showSearching, setShowSearching] = useState(false);
+    const [searchingOrderId, setSearchingOrderId] = useState(null);
 
     // ── Location Search State ──────────────────────────────────────
     const [searchQuery, setSearchQuery] = useState('');
     const [searchSuggestions, setSearchSuggestions] = useState([]);
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchFocused, setSearchFocused] = useState(false);
+    
+    // Route Preferences
+    const [vehicleType, setVehicleType] = useState('bike');
+    const [avoidTolls, setAvoidTolls] = useState(false);
+    const [avoidMotorways, setAvoidMotorways] = useState(false);
+    
     const searchDebounceRef = useRef(null);
     const searchInputRef = useRef(null);
     // Always holds the latest GPS location — prevents stale closure in debounce
@@ -135,10 +143,17 @@ const HomeScreen = () => {
                 const res = await SheetService.getUserActiveOrder();
                 if (res?.data?.order && res?.success !== false) {
                     const o = res.data.order;
+                    // IF order is cancelled, don't set it as active
+                    if (o.status === 'cancelled') {
+                        if (activeOrder) setActiveOrder(null);
+                        setIsTracking(false);
+                        return;
+                    }
+
                     setActiveOrder({
                         id: o.id,
-                        status: o.status,
-                        biker: o.biker,
+                        status: o.status === 'driver_assigned' ? 'accepted' : o.status,
+                        biker: o.biker || o.driver,
                         pickup: { address: o.pickupAddress || o.pickup?.address },
                         dropoff: { address: o.dropoffAddress || o.dropoff?.address, label: o.dropoffLabel || o.dropoff?.label },
                         priceCents: o.priceCents
@@ -666,22 +681,17 @@ const HomeScreen = () => {
     };
 
     const handleCancelTrip = async () => {
-        if (!activeOrder?.id) return;
-        try {
-            const res = await SheetService.cancelOrder(activeOrder.id);
-            if (res && res.success !== false) {
-                setActiveOrder(null);
-                setIsTracking(false);
-                Alert.alert('Trip Cancelled', 'Your trip has been cancelled successfully.');
-            } else {
-                Alert.alert('Cancel Failed', res?.message || 'Could not cancel trip.');
-            }
-        } catch (e) {
-            Alert.alert('Error', 'Network error or server failed to respond.');
+        if (!activeOrder?.id) {
+            // If No active order but somehow still tracking/searching
+            setActiveOrder(null);
+            setIsTracking(false);
+            setShowSearching(false);
+            return;
         }
+        await handleCancelOrder(activeOrder.id);
     };
 
-    const handleConfirmOrder = async () => {
+    const handleConfirmOrder = async (targetBiker = null) => {
         if (!location) {
             Alert.alert('Location Error', 'Location not ready. Please wait a moment.');
             return;
@@ -695,115 +705,164 @@ const HomeScreen = () => {
             return;
         }
         try {
+            // Set tracking immediately for UI feedback
             setIsTracking(true);
 
-            // 1. Save a fully-populated draft
-            const draftRes = await SheetService.upsertDraft({
-                pickupLat: pickupPoint.lat,
-                pickupLng: pickupPoint.lng,
-                pickupAddress: pickupPoint.label,
-                dropoffLat: selectedRoute.dropoff.lat,
-                dropoffLng: selectedRoute.dropoff.lng,
-                dropoffAddress: selectedRoute.dropoff.label || selectedRoute.to,
-                serviceType: activeService,
-                distanceKm: selectedRoute.distanceKm,
-                estimatedPriceCents: editablePrice || selectedRoute.priceCents,
-                etaMinutes: selectedRoute.etaMinutes,
-            });
+            // If it's a broadcast order (no targetBiker), show searching modal immediately for instant feedback
+            if (!targetBiker) {
+                setShowSearching(true);
+            }
 
-            const draftId = draftRes?.data?.draftOrder?.id || draftOrderId;
-            if (draftId) setDraftOrderId(draftId);
+            // 1 & 2. Save draft and prepare socket in parallel
+            const [draftRes, socket] = await Promise.all([
+                SheetService.upsertDraft({
+                    pickupLat: pickupPoint.lat,
+                    pickupLng: pickupPoint.lng,
+                    pickupAddress: pickupPoint.label,
+                    dropoffLat: selectedRoute.dropoff.lat,
+                    dropoffLng: selectedRoute.dropoff.lng,
+                    dropoffAddress: selectedRoute.dropoff.label || selectedRoute.to,
+                    serviceType: activeService,
+                    distanceKm: selectedRoute.distanceKm,
+                    estimatedPriceCents: editablePrice || selectedRoute.priceCents,
+                    etaMinutes: selectedRoute.etaMinutes,
+                }),
+                socketRef.current?.connected ? socketRef.current : SheetService.connectTrackingSocket()
+            ]);
 
-            // 2. Prepare socket for incoming events before creating order
-            const socket = socketRef.current?.connected ? socketRef.current : await SheetService.connectTrackingSocket();
+            // Guard: If user cancelled while we were waiting for draft creation
+            if (!showSearching && !targetBiker) {
+                console.log('[HomeScreen] Order cancelled during draft creation.');
+                setIsTracking(false);
+                return;
+            }
+
+            if (!draftRes?.success) {
+                const msg = draftRes?.message || 'Order creation failed (draft)';
+                Alert.alert('Order Failed', msg);
+                setIsTracking(false);
+                setShowSearching(false);
+                setSearchingOrderId(null);
+                return;
+            }
+
+            const draftId = draftRes.data.draftOrder?.id || draftRes.data.id;
             socketRef.current = socket;
 
-            // 3. Confirm and create — pass the selected biker so backend uses them directly
+            // 3. Confirm and create — pass the target biker if provided
             const res = await SheetService.createOrder({
                 paymentMethod: 'cash',
                 draftOrderId: draftId,
-                preferredBikerId: selectedBiker?.id || undefined,
+                preferredBikerId: targetBiker?.id || undefined,
             });
+
+            // Guard: If user cancelled while we were waiting for order creation
+            if (!showSearching && !targetBiker) {
+                console.log('[HomeScreen] Order cancelled during creation API call.');
+                setIsTracking(false);
+                return;
+            }
 
             if (!res?.success) {
                 const msg = res?.message || 'Order creation failed';
                 Alert.alert('Order Failed', msg);
                 setIsTracking(false);
+                setShowSearching(false);
+                setSearchingOrderId(null);
                 return;
             }
 
-            const orderId = res.data.orderId;
+            const orderId = res.data.orderId || res.data.id;
             const newOrder = {
                 id: orderId,
-                status: 'pending',
-                biker: selectedBiker,
+                status: targetBiker ? 'accepted' : 'pending_bids',
+                biker: targetBiker,
                 pickup: pickupPoint,
-                dropoff: selectedRoute?.dropoff || { lat: selectedRoute?.dropoffLat, lng: selectedRoute?.dropoffLng, label: selectedRoute?.to }
+                dropoff: selectedRoute.dropoff,
+                priceCents: editablePrice || selectedRoute?.priceCents || 0
             };
+
+            // Final Guard before showing the active order card
+            if (!targetBiker && !showSearching) {
+                 console.log('[HomeScreen] Aborting UI update: User cancelled exactly when order was created.');
+                 setIsTracking(false);
+                 return;
+            }
+
             setActiveOrder(newOrder);
+            setSelectedRoute(null);
+            setEditablePrice(null);
 
-            socket.emit('subscribe', { orderId });
+            if (socket) {
+                socket.emit('subscribe', { orderId });
 
-            // Set up listeners (we can do this once or refresh them)
-            socket.off('tracking_update');
-            socket.on('tracking_update', (u) => {
-                if (u?.orderId === orderId) setBikerPos({ latitude: u.lat, longitude: u.lng });
-            });
-
-            socket.off('order_accepted');
-            socket.on('order_accepted', (data) => {
-                if (data?.orderId !== orderId) return;
-                setActiveOrder(prev => prev ? { ...prev, status: 'accepted', biker: data.biker } : prev);
-                setBids([]); // Clear bids once accepted
-                Alert.alert('Biker Accepted', `${data.biker?.name || 'A biker'} is on the way!`);
-            });
-
-            socket.on('new_bid', (data) => {
-                if (data?.orderId !== orderId) return;
-                setBids(prev => {
-                    const exists = prev.find(b => b.id === data.bid.id);
-                    if (exists) return prev;
-                    return [...prev, data.bid];
+                // Set up listeners
+                socket.off('tracking_update');
+                socket.on('tracking_update', (u) => {
+                    if (u?.orderId === orderId) setBikerPos({ latitude: u.lat, longitude: u.lng });
                 });
-            });
 
-            socket.off('order_status_update');
-            socket.on('order_status_update', async (data) => {
-                if (data?.orderId !== orderId) return;
-                setActiveOrder(prev => prev ? { ...prev, status: data.status } : prev);
+                socket.off('order_accepted');
+                socket.on('order_accepted', (data) => {
+                    if (data?.orderId !== orderId) return;
+                    setShowSearching(false);
+                    setActiveOrder(prev => prev ? { ...prev, status: 'accepted', biker: data.biker || data.driver } : prev);
+                    setBids([]);
+                    Alert.alert('Biker Accepted', `${data.biker?.name || 'A biker'} is on the way!`);
+                });
 
-                if (data.status === 'cancelled') {
-                    Alert.alert('Trip Cancelled', 'Your trip has been cancelled.');
-                    setActiveOrder(null);
-                    setSelectedRoute(null);
-                    setIsTracking(false);
-                } else if (data.status === 'completed') {
-                    if (user?.role === 'customer') {
-                        const completedBiker = data.biker || {};
-                        const completedOrderId = data.orderId;
-                        // Persist pending rating so user can't bypass it
-                        await AppSecurity.setPendingRating(
-                            completedOrderId,
-                            completedBiker.id,
-                            completedBiker.name || 'Your Biker'
-                        );
-                        // Force navigate to mandatory rating
-                        navigation.navigate('Rating', {
-                            bikerId: completedBiker.id,
-                            bikerName: completedBiker.name || 'Your Biker',
-                            bikerPhoto: completedBiker.photo || null,
-                            orderId: completedOrderId,
-                        });
+                socket.off('new_bid');
+                socket.on('new_bid', (data) => {
+                    if (data?.orderId !== orderId) return;
+                    setBids(prev => {
+                        const exists = prev.find(b => b.id === data.bid.id);
+                        if (exists) return prev;
+                        return [...prev, data.bid];
+                    });
+                });
+
+                socket.off('order_status_update');
+                socket.on('order_status_update', async (data) => {
+                    if (data?.orderId !== orderId) return;
+                    if (activeOrder?.status === 'cancelled') return;
+
+                    setActiveOrder(prev => prev ? { ...prev, status: data.status } : prev);
+
+                    if (data.status === 'cancelled') {
+                        Alert.alert('Trip Cancelled', 'Your trip has been cancelled.');
+                        setActiveOrder(null);
+                        setSelectedRoute(null);
+                        setIsTracking(false);
+                    } else if (data.status === 'completed') {
+                        if (user?.role === 'customer') {
+                            const completedBiker = data.biker || data.driver || {};
+                            const completedOrderId = data.orderId;
+                            await AppSecurity.setPendingRating(
+                                completedOrderId,
+                                completedBiker.id,
+                                completedBiker.name || 'Your Biker'
+                            );
+                            navigation.navigate('Rating', {
+                                bikerId: completedBiker.id,
+                                bikerName: completedBiker.name || 'Your Biker',
+                                bikerPhoto: completedBiker.photo || null,
+                                orderId: completedOrderId,
+                            });
+                        }
+                        setActiveOrder(null);
+                        setSelectedRoute(null);
+                        setIsTracking(false);
                     }
-                    setActiveOrder(null);
-                    setSelectedRoute(null);
-                    setIsTracking(false);
-                }
-            });
+                });
+            }
 
-            Alert.alert('Order Confirmed! 🎉', `Your biker ${selectedBiker?.name ? '(' + selectedBiker.name + ') ' : ''}is on the way.`);
+            if (!targetBiker) {
+                setSearchingOrderId(orderId);
+            }
         } finally {
-            setIsTracking(false);
+            if (!activeOrder?.id && !showSearching) {
+                setIsTracking(false);
+            }
         }
     };
 
@@ -1073,7 +1132,6 @@ const HomeScreen = () => {
             setSearchingBikers(false);
             setRoutePickup(null);
             setSelectedProvider(null);
-            setFoodMenuVisible(false);
             setSelectedBiker(null);
             if (route.params?.selectedRoute || route.params?.reorder) {
                 navigation.setParams({ selectedRoute: null, reorder: null });
@@ -1327,17 +1385,30 @@ const HomeScreen = () => {
 
 
     const handleCancelOrder = async (orderId) => {
+        if (!orderId) return;
+
+        // 1. Wipe state IMMEDIATELY for instant UI feedback and to prevent race conditions
+        console.log(`[HomeScreen] Cancelling order ${orderId} locally...`);
+        setShowSearching(false);
+        setSearchingOrderId(null);
+        setActiveOrder(null);
+        setIsTracking(false);
+        setBids([]);
+
         try {
             const res = await SheetService.cancelOrder(orderId);
-            if (res?.success) {
-                setActiveOrder(null);
-                setBids([]);
-                Alert.alert('Order Cancelled', 'Your order request has been cancelled.');
+            if (res.success) {
+                console.log('[HomeScreen] Order cancelled on server.');
             } else {
                 Alert.alert('Error', res?.message || 'Failed to cancel order.');
             }
         } catch (error) {
+            console.error('[HomeScreen] Cancel Error:', error);
             Alert.alert('Error', 'Network error or server failed to respond.');
+        } finally {
+            // Safety fallback: always hide search modal if attempt was made
+            setShowSearching(false);
+            setIsTracking(false);
         }
     };
 
@@ -1596,8 +1667,8 @@ const HomeScreen = () => {
                                 <Avatar.Icon
                                     size={28}
                                     icon={bi(foodKind === 'pharmacy' ? 'medical-bag' : foodKind === 'grocery' ? 'cart' : foodKind === 'boutique' ? 'tshirt-crew' : foodKind === 'bar' ? 'glass-cocktail' : foodKind === 'school' ? 'school' : foodKind === 'church' ? 'church' : foodKind === 'salon' ? 'content-cut' : 'silverware-fork-knife')}
-                                    backgroundColor={selectedProvider?.id === p.id ? '#00FD3F' : '#111'}
-                                    color={selectedProvider?.id === p.id ? '#000' : '#A8E05F'}
+                                    backgroundColor={selectedProvider?.id === p.id ? '#3277FF' : '#111'}
+                                    color={selectedProvider?.id === p.id ? '#000' : '#3277FF'}
                                 />
                             </View>
                         </Marker>
@@ -1641,31 +1712,29 @@ const HomeScreen = () => {
                 ]}>
                     <View style={styles.searchBarRow}>
                         <IconButton
-                            icon={bi('magnify')}
+                            icon={bi('menu')}
                             size={24}
-                            iconColor="#00FD3F"
-                            style={{ margin: 0, marginLeft: 8 }}
+                            iconColor="#FFF"
+                            style={{ marginLeft: 8 }}
+                            onPress={() => navigation.openDrawer()}
                         />
                         <TextInput
                             ref={searchInputRef}
                             style={styles.searchInput}
                             placeholder="Where to go?"
-                            placeholderTextColor="rgba(255,255,255,0.85)"
+                            placeholderTextColor="rgba(255,255,255,0.6)"
                             value={searchQuery}
                             onChangeText={handleSearchInput}
                             onFocus={() => setSearchFocused(true)}
                             onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
                             returnKeyType="search"
-                            autoCorrect={false}
                         />
-                        {searchLoading && (
-                            <ActivityIndicator size="small" color="#00FD3F" style={{ marginRight: 12 }} />
-                        )}
-                        {searchQuery.length > 0 && !searchLoading && (
-                            <TouchableOpacity onPress={clearSearch} style={{ paddingRight: 8 }}>
-                                <IconButton icon={bi('close-circle')} size={18} iconColor="#7F8C8D" style={{ margin: 0 }} />
-                            </TouchableOpacity>
-                        )}
+                        <IconButton
+                            icon={bi('mic')}
+                            size={24}
+                            iconColor="#FFF"
+                            style={{ marginRight: 8 }}
+                        />
                     </View>
 
                     {/* Suggestions Dropdown */}
@@ -1686,7 +1755,7 @@ const HomeScreen = () => {
                                             <IconButton
                                                 icon={bi(index === 0 ? 'map-marker' : 'map-marker-outline')}
                                                 size={18}
-                                                iconColor={index === 0 ? '#00FD3F' : '#7F8C8D'}
+                                                iconColor={index === 0 ? '#3277FF' : '#7F8C8D'}
                                                 style={{ margin: 0 }}
                                             />
                                         </View>
@@ -1705,6 +1774,29 @@ const HomeScreen = () => {
                         </View>
                     )}
                 </View>
+                
+                {/* Horizontal Category Chips (Reference Image 1 Right) */}
+                {!searchFocused && (
+                    <ScrollView 
+                        horizontal 
+                        showsHorizontalScrollIndicator={false} 
+                        style={styles.chipsScroll}
+                        contentContainerStyle={styles.chipsContent}
+                    >
+                        <TouchableOpacity style={styles.chipItem}>
+                            <IconButton icon={bi('plus-circle')} size={16} iconColor="#000" style={styles.chipIcon} />
+                            <Text style={styles.chipText}>Add</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.chipItem}>
+                            <IconButton icon={bi('cart')} size={16} iconColor="#000" style={styles.chipIcon} />
+                            <Text style={styles.chipText}>Grocery Store</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.chipItem}>
+                            <IconButton icon={bi('gas-station')} size={16} iconColor="#000" style={styles.chipIcon} />
+                            <Text style={styles.chipText}>Petrol Pump</Text>
+                        </TouchableOpacity>
+                    </ScrollView>
+                )}
             </View>
 
 
@@ -1756,16 +1848,22 @@ const HomeScreen = () => {
                                 <View style={styles.activeOrderHeader}>
                                     <View>
                                         <View style={styles.statusPillFancy}>
-                                            <View style={[styles.statusPulse, { backgroundColor: activeOrder.status === 'pending' ? '#F1C40F' : '#00FD3F' }]} />
+                                            <View style={[styles.statusPulse, { backgroundColor: activeOrder.status === 'pending' || activeOrder.status === 'pending_bids' ? '#F1C40F' : '#00FD3F' }]} />
                                             <Text style={styles.statusPillTextFancy}>
-                                                {activeOrder.status === 'pending' ? 'Biker Assigned' :
-                                                    activeOrder.status === 'picked_up' ? 'In Transit' : 'In Progress'}
+                                                {activeOrder.status === 'pending' ? 'WAITING FOR BIKER' :
+                                                    activeOrder.status === 'pending_bids' ? 'RECEIVING OFFERS' :
+                                                    activeOrder.status === 'accepted' ? 'BIKER ASSIGNED' :
+                                                    activeOrder.status === 'picked_up' ? 'IN TRANSIT' : 'ACTIVE TRIP'}
                                             </Text>
                                         </View>
-                                        <Text style={styles.activeOrderBikerName}>{activeOrder.biker?.name || 'Searching for Biker...'}</Text>
+                                        <Text style={styles.activeOrderBikerName}>
+                                            {activeOrder.biker?.name || (activeOrder.status === 'pending_bids' ? 'Gathering offers...' : 'Searching for Biker...')}
+                                        </Text>
                                     </View>
                                     <View style={{ alignItems: 'flex-end' }}>
-                                        <Text style={styles.activeOrderPrice}>$0.00</Text>
+                                        <Text style={styles.activeOrderPrice}>
+                                            ${((activeOrder.priceCents || 0) / 100).toFixed(2)}
+                                        </Text>
                                         <Text style={styles.priceLabelSmall}>TOTAL</Text>
                                     </View>
                                 </View>
@@ -1782,11 +1880,11 @@ const HomeScreen = () => {
                                 </View>
 
                                 <View style={styles.straightActionRow}>
-                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(0, 253, 63, 0.1)' }]} onPress={handleCallBiker}>
-                                        <IconButton icon={bi('phone')} size={24} iconColor="#00FD3F" />
+                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(50, 119, 255, 0.1)' }]} onPress={handleCallBiker}>
+                                        <IconButton icon={bi('phone')} size={24} iconColor="#3277FF" />
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(52, 152, 219, 0.1)' }]} onPress={handleChatBiker}>
-                                        <IconButton icon={bi('chat')} size={24} iconColor="#3498DB" />
+                                    <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(90, 200, 250, 0.1)' }]} onPress={handleChatBiker}>
+                                        <IconButton icon={bi('chat')} size={24} iconColor="#5AC8FA" />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={[styles.iconCircleBtn, { backgroundColor: 'rgba(231, 76, 60, 0.1)' }]} onPress={() => {
                                         Alert.alert('Cancel Trip', 'Are you sure?', [
@@ -1800,7 +1898,7 @@ const HomeScreen = () => {
 
                                 <Button
                                     mode="contained"
-                                    buttonColor="#00FD3F"
+                                    buttonColor="#3277FF"
                                     textColor="#000"
                                     style={[styles.mainStatusBtn, { marginTop: 12 }]}
                                     labelStyle={{ fontWeight: '900', fontSize: 13, textTransform: 'uppercase' }}
@@ -1812,35 +1910,8 @@ const HomeScreen = () => {
 
                         {!activeOrder && (
                             <>
-                                {/* Stats Header - shown at top for Send a Package when route selected */}
-                                {(activeService === 'courier' || activeService === 'bike') && selectedRoute && (
-                                    <View style={[styles.statsHeader, { justifyContent: 'space-evenly', marginBottom: 12, marginTop: 4 }]}>
-                                        <View style={styles.statItem}>
-                                            <Text style={[styles.statLabel, { textAlign: 'center' }]}>BIKE</Text>
-                                            <Text style={[styles.statValue, { textAlign: 'center' }]}>
-                                                {bikersFound.length > 0 ? `${bikersFound.length} available` : 'Searching...'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.statDivider} />
-                                        <View style={styles.statItem}>
-                                            <Text style={[styles.statLabel, { textAlign: 'center' }]}>ETA</Text>
-                                            <Text style={[styles.statValue, { textAlign: 'center' }]}>
-                                                {bikersFound.length > 0 && bikersFound[0]?.distanceKm
-                                                    ? `${Math.ceil(bikersFound[0].distanceKm / 20 * 60)} min`
-                                                    : selectedRoute?.etaMinutes
-                                                        ? `${selectedRoute.etaMinutes} min`
-                                                        : '--'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.statDivider} />
-                                        <View style={styles.statItem}>
-                                            <Text style={[styles.statLabel, { textAlign: 'center' }]}>ESTIMATE</Text>
-                                            <Text style={[styles.statValue, { textAlign: 'center' }]}>
-                                                {selectedRoute?.currency || '$'}{((editablePrice || selectedRoute?.priceCents || 0) / 100).toFixed(2)}
-                                            </Text>
-                                        </View>
-                                    </View>
-                                )}
+                                {(/ * redundant stats removed * /) && null}
+
 
                                 {/* Service Categories Redesigned */}
                                 <View style={styles.serviceRowPremium}>
@@ -2013,7 +2084,7 @@ const HomeScreen = () => {
 
 
 
-                                {/* Route confirmation - always visible when route selected */}
+                                {/* Route confirmation with integrated action */}
                                 {selectedRoute && (
                                     <View style={styles.confirmContainerFixed}>
                                         <View style={styles.routeHeader}>
@@ -2038,8 +2109,8 @@ const HomeScreen = () => {
                                                 </Text>
                                                 <Text style={styles.pickupMain} numberOfLines={1}>{selectedRoute.to}</Text>
                                                 <Text style={styles.routeLabel}>{(selectedRoute.distanceKm || 0).toFixed(2)} km • {selectedRoute.etaMinutes || 0} min</Text>
-                                                <Text style={styles.routeChangeHint}>Tap to change</Text>
                                             </TouchableOpacity>
+                                            
                                             <View style={styles.priceEditContainer}>
                                                 <Text style={styles.currencyIcon}>{selectedRoute.currency || '$'}</Text>
                                                 <TouchableOpacity
@@ -2069,6 +2140,17 @@ const HomeScreen = () => {
                                                 </TouchableOpacity>
                                             </View>
                                         </View>
+
+                                        <TouchableOpacity 
+                                            style={[styles.mainConfirmBtnLarge, isTracking && { opacity: 0.7 }]} 
+                                            onPress={() => handleConfirmOrder(null)}
+                                            disabled={isTracking}
+                                        >
+                                            <Text style={styles.mainConfirmBtnText}>
+                                                {isTracking ? 'Processing...' : 'Book Ride Now'}
+                                            </Text>
+                                            {!isTracking && <IconButton icon={bi('chevron-right')} size={24} iconColor="#000" style={{ margin: 0 }} />}
+                                        </TouchableOpacity>
                                     </View>
                                 )}
 
@@ -2141,7 +2223,7 @@ const HomeScreen = () => {
                                                         styles.confirmBikerBtn,
                                                         (isTracking || !selectedBiker) && { opacity: 0.5 }
                                                     ]}
-                                                    onPress={handleConfirmOrder}
+                                                    onPress={() => handleConfirmOrder(selectedBiker)}
                                                     disabled={isTracking || !selectedBiker}
                                                 >
                                                     <LinearGradient
@@ -2259,6 +2341,82 @@ const HomeScreen = () => {
                         </Button>
                     </View>
                 </Modal>
+                <Modal
+                    visible={showSearching || activeOrder?.status === 'pending_bids'}
+                    onDismiss={() => {
+                        if (activeOrder?.status === 'pending_bids') return; // Don't dismiss if bidding is active unless cancelled
+                        setShowSearching(false);
+                    }}
+                    contentContainerStyle={[styles.modalContent, { backgroundColor: '#1C1C1E', maxHeight: height * 0.8 }]}
+                >
+                    <View style={{ padding: 24 }}>
+                        <View style={{ alignItems: 'center' }}>
+                            <View style={styles.searchingAnimContainer}>
+                                <ActivityIndicator size="large" color="#3277FF" />
+                                <View style={styles.searchingPulse} />
+                            </View>
+                            <Text style={styles.searchingTitle}>Waiting for Offers</Text>
+                            <Text style={styles.searchingSubtitle}>
+                                Bikers nearby are reviewing your request. You'll receive offers shortly...
+                            </Text>
+                            <View style={styles.searchingInfoBox}>
+                                <IconButton icon={bi('package-variant')} size={20} iconColor="#5B5B5E" style={{ margin: 0 }} />
+                                <Text style={styles.searchingInfoText}>Order #{searchingOrderId || activeOrder?.id || '---'}</Text>
+                            </View>
+                        </View>
+
+                        {/* Bids List inside the Search Modal */}
+                        {bids.length > 0 && (
+                            <View style={{ marginTop: 10, maxHeight: 300 }}>
+                                <Text style={styles.bidTitleUnderSearch}>Incoming Offers:</Text>
+                                <ScrollView showsVerticalScrollIndicator={false}>
+                                    {bids.map(bid => (
+                                        <Surface key={bid.id} style={styles.bidCardUnified} elevation={2}>
+                                            <View style={styles.bidRow}>
+                                                <Avatar.Text size={36} label={bid.biker?.name?.[0] || 'B'} style={{ backgroundColor: '#2C2C2E' }} />
+                                                <View style={styles.bidInfo}>
+                                                    <Text style={styles.bidNameUnified}>{bid.biker?.name}</Text>
+                                                    <View style={styles.ratingRow}>
+                                                        <IconButton icon={bi('star')} size={12} iconColor="#3277FF" style={{ margin: 0 }} />
+                                                        <Text style={styles.ratingTextBlue}>{bid.biker?.rating || '5.0'}</Text>
+                                                    </View>
+                                                </View>
+                                                <View style={styles.bidActionUnified}>
+                                                    <Text style={styles.bidPriceUnified}>${(bid.priceCents / 100).toFixed(2)}</Text>
+                                                    <TouchableOpacity 
+                                                        style={styles.acceptBidBtnUnified}
+                                                        onPress={() => handleAcceptBid(bid.id)}
+                                                    >
+                                                        <Text style={styles.acceptBidBtnText}>Accept</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                        </Surface>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                        )}
+
+                        <Button
+                            mode="outlined"
+                            onPress={() => {
+                                const orderIdToCancel = searchingOrderId || activeOrder?.id;
+                                Alert.alert('Cancel Request?', 'Are you sure you want to stop searching?', [
+                                    { text: 'Keep Waiting' },
+                                    { text: 'Stop', onPress: () => { 
+                                        setShowSearching(false); 
+                                        if (orderIdToCancel) handleCancelOrder(orderIdToCancel);
+                                        else handleCancelTrip();
+                                    }}
+                                ]);
+                            }}
+                            style={styles.searchingCancelBtn}
+                            textColor="#E74C3C"
+                        >
+                            Cancel Request
+                        </Button>
+                    </View>
+                </Modal>
             </Portal>
 
             <InAppCallUI
@@ -2280,65 +2438,6 @@ const HomeScreen = () => {
                 }}
             />
 
-            {/* Bidding Sheet (inDrive Style) */}
-            {activeOrder?.status === 'pending_bids' && (
-                <Portal>
-                    <View style={styles.biddingOverlay}>
-                        <BlurView intensity={80} style={StyleSheet.absoluteFill} tint="dark" />
-                        <View style={[styles.biddingContent, { paddingBottom: insets.bottom + 20 }]}>
-                            <View style={styles.biddingHeader}>
-                                <View style={styles.statusDot} />
-                                <Text style={styles.biddingTitle}>Looking for Bikers Nearby...</Text>
-                                <IconButton icon={bi('close')} size={20} onPress={() => handleCancelOrder(activeOrder.id)} />
-                            </View>
-
-                            <ScrollView style={styles.bidsScroll} showsVerticalScrollIndicator={false}>
-                                {bids.length === 0 ? (
-                                    <View style={styles.emptyBids}>
-                                        <ActivityIndicator animating color={theme.colors.primary} size="large" />
-                                        <Text style={styles.emptyBidsText}>Waiting for offers...</Text>
-                                    </View>
-                                ) : (
-                                    bids.map(bid => (
-                                        <Surface key={bid.id} style={styles.bidCard} elevation={2}>
-                                            <View style={styles.bidRow}>
-                                                <Avatar.Text size={40} label={bid.biker?.name?.[0] || 'B'} style={{ backgroundColor: theme.colors.primaryContainer }} />
-                                                <View style={styles.bidInfo}>
-                                                    <Text style={styles.bidName}>{bid.biker?.name}</Text>
-                                                    <View style={styles.ratingRow}>
-                                                        <IconButton icon={bi('star')} size={14} iconColor="#FFD700" style={{ margin: 0 }} />
-                                                        <Text style={styles.ratingText}>{bid.biker?.rating || '5.0'}</Text>
-                                                    </View>
-                                                </View>
-                                                <View style={styles.bidAction}>
-                                                    <Text style={styles.bidPrice}>${(bid.priceCents / 100).toFixed(2)}</Text>
-                                                    <Button
-                                                        mode="contained"
-                                                        onPress={() => handleAcceptBid(bid.id)}
-                                                        style={styles.acceptBidBtn}
-                                                        labelStyle={{ fontSize: 12 }}
-                                                    >
-                                                        Accept
-                                                    </Button>
-                                                </View>
-                                            </View>
-                                        </Surface>
-                                    ))
-                                )}
-                            </ScrollView>
-
-                            <Button
-                                mode="outlined"
-                                onPress={() => handleCancelOrder(activeOrder.id)}
-                                style={styles.cancelBiddingBtn}
-                                textColor="#FF4444"
-                            >
-                                Cancel Request
-                            </Button>
-                        </View>
-                    </View>
-                </Portal>
-            )}
         </View>
     );
 };
@@ -3199,15 +3298,16 @@ const styles = StyleSheet.create({
         elevation: 10,
     },
     searchBarSurface: {
-        borderRadius: 24,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        borderWidth: 1.5,
-        borderColor: '#00FD3F',
+        borderRadius: 16,
+        backgroundColor: '#1C1C1E',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+        elevation: 10,
     },
     searchBarSurfaceFocused: {
-        borderColor: '#00FD3F',
-        borderWidth: 2,
-        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+        backgroundColor: '#2C2C2E',
     },
     searchBarRow: {
         flexDirection: 'row',
@@ -3430,7 +3530,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     appBadge: {
-        backgroundColor: '#00FD3F',
+        backgroundColor: '#3277FF',
         paddingHorizontal: 8,
         paddingVertical: 3,
         borderRadius: 6,
@@ -3499,9 +3599,9 @@ const styles = StyleSheet.create({
         borderColor: 'transparent',
     },
     activeServiceFrame: {
-        borderColor: '#00FD3F',
-        backgroundColor: 'rgba(0, 253, 63, 0.05)',
-        shadowColor: '#00FD3F',
+        borderColor: '#3277FF',
+        backgroundColor: 'rgba(50, 119, 255, 0.05)',
+        shadowColor: '#3277FF',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.6,
         shadowRadius: 12,
@@ -3535,19 +3635,19 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     hideAllLink: {
-        color: '#00FD3F',
+        color: '#3277FF',
         fontSize: 14,
         fontWeight: '800',
     },
     nearbyBikerItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        padding: 14,
-        borderRadius: 18,
+        backgroundColor: '#121212',
+        padding: 16,
+        borderRadius: 24,
         marginBottom: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.03)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.05)',
     },
     nearbyBikerInfo: {
         flex: 1,
@@ -3559,17 +3659,16 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     nearbyBikerItemActive: {
-        borderColor: '#00FD3F',
-        borderWidth: 2,
-        backgroundColor: 'rgba(0, 253, 63, 0.08)',
+        borderColor: '#3277FF',
+        backgroundColor: 'rgba(50, 119, 255, 0.05)',
     },
     ratingRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginTop: 3,
+        marginTop: 4,
     },
     ratingText: {
-        color: '#7F8C8D',
+        color: '#3277FF', // Blue stars/text
         fontSize: 12,
         fontWeight: '700',
     },
@@ -3579,105 +3678,65 @@ const styles = StyleSheet.create({
         borderRadius: 18,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#A8E05F',
+        shadowColor: '#3277FF',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.4,
         shadowRadius: 12,
         elevation: 8,
     },
 
-    // Bidding UI Styles
-    biddingOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: 'flex-end',
-        zIndex: 1000,
-    },
-    biddingContent: {
-        backgroundColor: 'rgba(28, 28, 30, 0.98)',
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
-        padding: 24,
-        maxHeight: height * 0.7,
-    },
-    biddingHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 20,
-    },
-    statusDot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#A8E05F',
-        marginRight: 12,
-    },
-    biddingTitle: {
-        fontSize: 20,
-        fontWeight: '800',
+    // Unified Bidding UI Styles
+    bidTitleUnderSearch: {
         color: '#FFFFFF',
-        flex: 1,
-    },
-    bidsScroll: {
-        marginBottom: 20,
-    },
-    emptyBids: {
-        paddingVertical: 50,
-        alignItems: 'center',
-    },
-    emptyBidsText: {
-        color: '#8A8A8E',
-        marginTop: 16,
-        fontSize: 16,
-    },
-    bidCard: {
-        backgroundColor: '#2C2C2E',
-        borderRadius: 20,
-        padding: 16,
+        fontSize: 15,
+        fontWeight: 'bold',
         marginBottom: 12,
+        marginTop: 5,
     },
-    bidRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    bidCardUnified: {
+        backgroundColor: '#2C2C2E',
+        borderRadius: 16,
+        padding: 12,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
     },
-    bidInfo: {
-        flex: 1,
-        marginLeft: 16,
-    },
-    bidName: {
-        fontSize: 17,
+    bidNameUnified: {
+        fontSize: 15,
         fontWeight: '700',
         color: '#FFFFFF',
     },
-    // Note: There's a duplicate 'ratingRow' and 'ratingText' in the provided instruction.
-    // Assuming the intention is to keep the existing one for the main UI and add these for bidding context if different.
-    // If they are meant to replace the existing ones, the instruction should be clearer.
-    // For now, I'll include them as they are in the instruction, assuming they are specific to bid cards.
-    ratingRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    ratingText: {
-        color: '#FFD700',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    bidAction: {
+    bidActionUnified: {
         alignItems: 'flex-end',
+        justifyContent: 'center',
     },
-    bidPrice: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#A8E05F',
-        marginBottom: 8,
+    bidPriceUnified: {
+        fontSize: 16,
+        fontWeight: '900',
+        color: '#3277FF',
+        marginBottom: 4,
     },
-    acceptBidBtn: {
-        borderRadius: 12,
-        height: 36,
+    acceptBidBtnUnified: {
+        backgroundColor: '#3277FF',
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
     },
-    cancelBiddingBtn: {
-        borderRadius: 16,
-        height: 52,
-        borderColor: '#3A3A3C',
+    acceptBidBtnText: {
+        color: '#000',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    ratingTextBlue: {
+        color: '#3277FF',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    searchingCancelBtn: {
+        width: '100%',
+        borderRadius: 14,
+        borderColor: 'rgba(231, 76, 60, 0.3)',
+        marginTop: 20,
     },
     bookRideTextPremium: {
         color: '#000',
@@ -3700,8 +3759,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 2,
-        borderColor: '#00FD3F',
-        shadowColor: '#00FD3F',
+        borderColor: '#3277FF',
+        shadowColor: '#3277FF',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.9,
         shadowRadius: 5,
@@ -3712,7 +3771,7 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#00FD3F',
+        backgroundColor: '#3277FF',
         bottom: -2,
     },
     confirmBikerBtn: {
@@ -3720,7 +3779,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         height: 56,
         elevation: 8,
-        shadowColor: '#00FD3F',
+        shadowColor: '#3277FF',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 10,
@@ -3751,17 +3810,138 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     showNearbyBtn: {
-        backgroundColor: 'rgba(168, 224, 95, 0.1)',
+        backgroundColor: 'rgba(50, 119, 255, 0.1)',
         borderRadius: 12,
         paddingVertical: 12,
         alignItems: 'center',
         marginTop: 10,
         borderWidth: 1,
-        borderColor: 'rgba(168, 224, 95, 0.3)',
+        borderColor: 'rgba(50, 119, 255, 0.3)',
     },
     showNearbyText: {
-        color: '#A8E05F',
+        color: '#3277FF',
         fontWeight: '700',
+    },
+    chipsScroll: {
+        marginTop: 12,
+    },
+    chipsContent: {
+        paddingRight: 20,
+    },
+    chipItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingRight: 12,
+        borderRadius: 12,
+        marginRight: 8,
+        height: 36,
+    },
+    chipIcon: {
+        margin: 0,
+        padding: 0,
+    },
+    chipText: {
+        color: '#000',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+
+    routePreviewContainer: { padding: 10 },
+    vehicleToggleRow: { flexDirection: 'row', backgroundColor: '#1C1C1E', borderRadius: 16, padding: 4, marginBottom: 16 },
+    vehicleToggleItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 44, borderRadius: 12 },
+    vehicleToggleActive: { backgroundColor: '#3277FF' },
+    vehicleToggleText: { color: 'rgba(255,255,255,0.6)', fontWeight: '700', fontSize: 14 },
+    
+    utilityScroll: { marginBottom: 16 },
+    utilityChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1C1C1E', paddingHorizontal: 12, height: 36, borderRadius: 18, marginRight: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+    utilityChipActive: { backgroundColor: '#FFFFFF' },
+    utilityChipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
+
+    routeStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', backgroundColor: '#1C1C1E', borderRadius: 20, padding: 16, marginBottom: 20 },
+    routeStatBlock: { alignItems: 'center' },
+    routeStatLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '800', marginBottom: 4 },
+    routeStatValue: { color: '#FFF', fontSize: 18, fontWeight: '900' },
+    routeStatDivider: { width: 1, height: 30, backgroundColor: 'rgba(255,255,255,0.1)' },
+
+    routeActionsGrid: { gap: 12 },
+    mainActionBtn: { backgroundColor: '#3277FF', height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+    mainActionBtnText: { color: '#FFF', fontSize: 18, fontWeight: '900' },
+    secondaryActionsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+    secondaryActionBtn: { flex: 1, backgroundColor: '#1C1C1E', height: 70, borderRadius: 18, alignItems: 'center', justifyContent: 'center', paddingTop: 8 },
+    secondaryActionText: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '700', marginTop: -4 },
+    
+    mainConfirmBtnLarge: {
+        backgroundColor: '#3277FF',
+        height: 58,
+        borderRadius: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 18,
+        shadowColor: '#3277FF',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 15,
+        elevation: 10,
+    },
+    mainConfirmBtnText: {
+        color: '#000',
+        fontSize: 18,
+        fontWeight: '900',
+        textTransform: 'uppercase',
+        letterSpacing: 1,
+    },
+    // Searching Modal Styles
+    searchingAnimContainer: {
+        width: 100,
+        height: 100,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    searchingPulse: {
+        position: 'absolute',
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        borderWidth: 2,
+        borderColor: 'rgba(50, 119, 255, 0.3)',
+    },
+    searchingTitle: {
+        color: '#FFF',
+        fontSize: 22,
+        fontWeight: '900',
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    searchingSubtitle: {
+        color: '#8E8E93',
+        fontSize: 14,
+        lineHeight: 20,
+        textAlign: 'center',
+        marginBottom: 24,
+        paddingHorizontal: 20,
+    },
+    searchingInfoBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 12,
+        marginBottom: 30,
+    },
+    searchingInfoText: {
+        color: '#FFF',
+        fontSize: 13,
+        fontWeight: '700',
+        marginLeft: 8,
+    },
+    searchingCancelBtn: {
+        width: '100%',
+        borderRadius: 14,
+        borderColor: 'rgba(231, 76, 60, 0.3)',
     },
 });
 

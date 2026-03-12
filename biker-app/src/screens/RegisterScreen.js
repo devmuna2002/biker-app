@@ -18,7 +18,7 @@ import { supabase } from '../api/SheetService';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const RegisterScreen = ({ navigation, route }) => {
+const RegisterScreen = ({ navigation, route, setUser }) => {
     const params = route?.params || {};
     const theme = useTheme();
     const [role, setRole] = useState(params.role || 'user');
@@ -73,6 +73,7 @@ const RegisterScreen = ({ navigation, route }) => {
             });
 
             if (res?.success) {
+                if (setUser) setUser(res.data.user);
                 navigation.replace('MainApp');
             } else {
                 setError(res?.message || 'Registration failed');
@@ -106,6 +107,7 @@ const RegisterScreen = ({ navigation, route }) => {
         });
 
         if (res?.success) {
+            if (setUser) setUser(res.data.user);
             navigation.replace('MainApp');
         } else {
             setError(res?.message || 'Registration failed');
@@ -228,7 +230,7 @@ const RegisterScreen = ({ navigation, route }) => {
                                 left={<TextInput.Icon icon={bi('account')} />}
                                 style={styles.input}
                                 outlineColor="rgba(255,255,255,0.1)"
-                                activeOutlineColor="#00FD3F"
+                                activeOutlineColor="#3277FF"
                                 theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
@@ -242,7 +244,7 @@ const RegisterScreen = ({ navigation, route }) => {
                                 left={<TextInput.Icon icon={bi('mail')} />}
                                 style={styles.input}
                                 outlineColor="rgba(255,255,255,0.1)"
-                                activeOutlineColor="#00FD3F"
+                                activeOutlineColor="#3277FF"
                                 theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
@@ -256,7 +258,7 @@ const RegisterScreen = ({ navigation, route }) => {
                                 right={<TextInput.Icon icon={bi(secureText ? 'eye-off' : 'eye')} onPress={() => setSecureText(!secureText)} forceTextInputFocus={false} />}
                                 style={styles.input}
                                 outlineColor="rgba(255,255,255,0.1)"
-                                activeOutlineColor="#00FD3F"
+                                activeOutlineColor="#3277FF"
                                 theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
@@ -335,8 +337,8 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: '#333', backgroundColor: 'rgba(255,255,255,0.02)', gap: 4,
     },
     roleButtonActive: {
-        backgroundColor: '#00FD3F', borderColor: '#00FD3F',
-        shadowColor: '#00FD3F', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
+        backgroundColor: '#3277FF', borderColor: '#3277FF',
+        shadowColor: '#3277FF', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
     },
     roleText: { color: '#888', fontWeight: 'normal', fontSize: 13 },
     roleTextActive: { color: '#000', fontWeight: '600', fontSize: 13 },
@@ -355,7 +357,7 @@ const styles = StyleSheet.create({
         marginBottom: 16, height: 50, fontSize: 14,
     },
     registerButton: {
-        backgroundColor: '#00FD3F', borderRadius: 12, height: 48,
+        backgroundColor: '#3277FF', borderRadius: 12, height: 48,
         alignItems: 'center', justifyContent: 'center', marginTop: 8,
     },
     registerButtonText: { color: '#000', fontSize: 15, fontWeight: 'bold' },
@@ -372,7 +374,7 @@ const styles = StyleSheet.create({
     googleButtonText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
     footer: { marginTop: 24, marginBottom: 20, alignItems: 'center' },
     footerText: { color: '#888', fontSize: 14 },
-    link: { color: '#00FD3F', fontWeight: '600' },
+    link: { color: '#3277FF', fontWeight: '600' },
 });
 
 export default RegisterScreen;

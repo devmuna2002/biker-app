@@ -7,7 +7,7 @@ import SheetService from '../api/SheetService';
 import { bi } from './AppIcon';
 import AppSecurity from '../utils/AppSecurity';
 
-const CustomDrawerContent = (props) => {
+const CustomDrawerContent = ({ extraProps, isBikerFlow, ...props }) => {
     const theme = useTheme();
     const isDrawerOpen = useDrawerStatus() === 'open';
     const [user, setUser] = React.useState(SheetService.currentUser || { name: 'User', photo: null });
@@ -58,7 +58,7 @@ const CustomDrawerContent = (props) => {
                     <View style={styles.userInfo}>
                         <Text style={[styles.userName, { color: theme.colors.text }]}>{user.name}</Text>
                         <Text style={[styles.userRole, { color: theme.colors.secondaryText }]}>
-                            {user.role === 'biker' ? 'Biker account' : 'Customer account'}
+                            {isBikerFlow ? 'Biker account' : 'Customer account'}
                         </Text>
                     </View>
                 </TouchableOpacity>
@@ -74,6 +74,27 @@ const CustomDrawerContent = (props) => {
                     labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
                     style={styles.drawerItem}
                 />
+                {isBikerFlow && (
+                    <>
+                        <DrawerItem
+                            label="Plans & Subscription"
+                            icon={({ color, size }) => <IconButton icon={bi('card-membership')} size={20} iconColor={theme.colors.primary} />}
+                            onPress={() => props.navigation.navigate('Subscription')}
+                            labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
+                            style={styles.drawerItem}
+                        />
+                        <DrawerItem
+                            label="Biker Services"
+                            icon={({ color, size }) => <IconButton icon={bi('plus-box')} size={20} iconColor={theme.colors.primary} />}
+                            onPress={() => {
+                                props.navigation.closeDrawer();
+                                extraProps?.onOpenActions?.();
+                            }}
+                            labelStyle={[styles.drawerLabel, { color: theme.colors.text }]}
+                            style={styles.drawerItem}
+                        />
+                    </>
+                )}
                 <DrawerItem
                     label="Send a Package"
                     icon={({ color, size }) => <IconButton icon={bi('package-variant-closed')} size={20} iconColor={theme.colors.primary} />}

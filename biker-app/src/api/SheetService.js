@@ -19,7 +19,7 @@ function resolveApiUrl() {
     baseUrl = envUrl.trim().replace(/\/+$/, '');
   }
 
-  // If we're in DEV, attempt to auto-detect the host machine's IP (works for Expo Go/Dev Client)
+  // If we're in DEV, attempt to auto-detect the host machine's IP
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
     if (typeof scriptURL === 'string') {
@@ -27,43 +27,63 @@ function resolveApiUrl() {
         const u = new URL(scriptURL);
         const host = u.hostname;
 
-        // Android Emulator specific host
+        // Android Emulator specific host: 10.0.2.2 is usually the host machine
         if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
-          return 'http://10.0.2.2:3003';
+          return 'http://10.0.2.2:3000';
         }
 
         if (host && host !== 'localhost' && host !== '127.0.0.1') {
-          return `http://${host}:3003`;
+          // If we have a real IP from scripts, use it with the default port
+          return `http://${host}:3000`;
         }
       } catch {
         const m = scriptURL.match(/https?:\/\/([^/:]+)(?::\d+)?\//);
         const host = m?.[1];
         if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
-          return 'http://10.0.2.2:3003';
+          return 'http://10.0.2.2:3000';
         }
         if (host && host !== 'localhost' && host !== '127.0.0.1') {
-          return `http://${host}:3003`;
+          return `http://${host}:3000`;
         }
       }
     }
   }
 
-  // If envUrl was set, use it. Otherwise fall back to the known machine IP or emulator host.
+  // If envUrl was set, use it.
   if (baseUrl) {
-    // If baseUrl is localhost/127.0.0.1 on Android, swap for 10.0.2.2
     if (Platform.OS === 'android' && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
       return baseUrl.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
     }
     return baseUrl;
   }
 
-  return Platform.OS === 'android' ? 'http://10.0.2.2:3003' : 'http://192.168.1.2:3003';
+  // Fallback machine IP (user's detected IP)
+  const MACHINE_IP = '192.168.100.145';
+  
+  if (Platform.OS === 'android') {
+    // If we detected a valid IP from the script, prefer it over loopback if it's not localhost
+    const scriptURL = NativeModules?.SourceCode?.scriptURL;
+    if (scriptURL) {
+       try {
+         const host = new URL(scriptURL).hostname;
+         if (host && host !== 'localhost' && host !== '127.0.0.1') {
+           return `http://${host}:3000`;
+         }
+       } catch(e) {}
+    }
+    return 'http://10.0.2.2:3000';
+  }
+
+  return `http://${MACHINE_IP}:3000`;
 }
 
+const MACHINE_IP = '192.168.100.145';
 const API_URL = resolveApiUrl();
-console.log(`[SheetService] Connected to API at: ${API_URL}`);
-if (typeof __DEV__ !== 'undefined' && __DEV__) {
-  console.log(`[SheetService] Development mode info: If failing on a real device, ensure it is on the same WiFi as ${API_URL}`);
+console.log(`[SheetService] ✅ API BASE URL: ${API_URL}`);
+
+if (Platform.OS === 'android') {
+  console.log(`[SheetService] 📱 Android detected. Using Emulator Loopback (10.0.2.2)`);
+  console.log(`[SheetService] 💡 TIP: If you see ERR_NETWORK, ensure your backend server is running and accessible at port 3000 or 3003.`);
 }
 
 const WS_PATH = '/ws/tracking';
@@ -75,34 +95,30 @@ const storageKeys = {
 
 const client = axios.create({
   baseURL: API_URL,
-  timeout: 60000,
+  timeout: 30000, // 30s timeout for all environments to handle slow initial discovery
 });
 
+// 1. Request interceptor for Auth tokens
 client.interceptors.request.use(async (config) => {
   const token = await AsyncStorage.getItem(storageKeys.token);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
+// 2. Consolidated Response Interceptor for Logging, 401s, and Smart Retries (Android)
 client.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    if (!originalRequest) return Promise.reject(error);
 
-    // Log detailed failure for 'Network Error' or timeouts
-    if (error.message === 'Network Error' || error.code === 'ECONNABORTED') {
-      const isLogoutTimeout = originalRequest?.url?.includes('/logout') && error.code === 'ECONNABORTED';
+    const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+    const isNetworkError = error.message === 'Network Error';
 
-      if (!isLogoutTimeout) {
-        console.warn(`[SheetService] ${error.code || 'ERROR'}: ${error.message} when calling ${originalRequest?.url} on ${API_URL}`);
-        if (error.code === 'ECONNABORTED') {
-          console.warn(`[SheetService] Request timed out after ${originalRequest?.timeout || 60000}ms - the database or network is very slow.`);
-        }
-      }
-    }
-
-    if (error?.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
+    // A. Handle 401 Unauthorized (Session expiry)
+    if (error.response?.status === 401 && !originalRequest._retryAuth) {
+      originalRequest._retryAuth = true;
+      console.warn('[SheetService] 401 Unauthorized - Clearing session.');
       try {
         await AsyncStorage.removeItem(storageKeys.token);
         await AsyncStorage.removeItem(storageKeys.user);
@@ -110,7 +126,65 @@ client.interceptors.response.use(
       } catch (e) {
         console.error('[SheetService] Error clearing session:', e);
       }
+      return Promise.reject(error);
     }
+
+    // B. Handle Connection Failures / Timeouts with Smart Retry (Android only)
+    if (Platform.OS === 'android' && (isNetworkError || isTimeout)) {
+      originalRequest._retryCount = (originalRequest._retryCount || 0) + 1;
+      
+      if (originalRequest._retryCount <= 3) {
+        let newBaseUrl = originalRequest.baseURL || API_URL;
+        console.log(`[SheetService] ⚠️ Android ${isTimeout ? 'Timeout' : 'Network Error'} (${originalRequest._retryCount}/3) on ${newBaseUrl}. Attempting failover...`);
+
+        // Failover Step 1: Swap Port (3000 <-> 3003)
+        if (originalRequest._retryCount === 1 || originalRequest._retryCount === 3) {
+           if (newBaseUrl.includes(':3000')) {
+             newBaseUrl = newBaseUrl.replace(':3000', ':3003');
+           } else if (newBaseUrl.includes(':3003')) {
+             newBaseUrl = newBaseUrl.replace(':3003', ':3000');
+           }
+        } 
+        
+        // Failover Step 2: Swap IP (Machine IP <-> 10.0.2.2)
+        if (originalRequest._retryCount === 2) {
+           if (newBaseUrl.includes(MACHINE_IP) && !newBaseUrl.includes('10.0.2.2')) {
+             newBaseUrl = newBaseUrl.replace(MACHINE_IP, '10.0.2.2');
+           } else if (newBaseUrl.includes('10.0.2.2')) {
+             newBaseUrl = newBaseUrl.replace('10.0.2.2', MACHINE_IP);
+           }
+        }
+
+        console.log(`[SheetService] 🔄 Retry ${originalRequest._retryCount}: Targets -> ${newBaseUrl}`);
+        originalRequest.baseURL = newBaseUrl;
+        
+        // Update specific URL host if it's absolute
+        if (originalRequest.url?.startsWith('http')) {
+          try {
+            const urlObj = new URL(originalRequest.url);
+            const baseUrlObj = new URL(newBaseUrl);
+            urlObj.host = baseUrlObj.host;
+            urlObj.port = baseUrlObj.port;
+            originalRequest.url = urlObj.toString();
+          } catch (e) {}
+        }
+        
+        return client(originalRequest);
+      }
+    }
+
+    // C. Non-retryable errors or failed after all retries
+    if (isNetworkError || isTimeout) {
+      console.warn(`[SheetService] ${error.code || 'ERROR'}: ${error.message} when calling ${originalRequest.url}`);
+      if (isTimeout) {
+        console.warn(`[SheetService] TIP: All connection attempts failed. Ensure your backend is running and accessible from the network.`);
+      }
+    } else if (error.response) {
+      console.warn(`[SheetService] ❌ API ERROR ${error.response.status}:`, error.response.data);
+    } else {
+      console.warn(`[SheetService] ❌ UNKNOWN ERROR:`, error.message);
+    }
+
     return Promise.reject(error);
   }
 );
@@ -162,6 +236,7 @@ const SheetService = {
   getUserId: () => SheetService.currentUser?.id,
 
   registerUser: async (userData) => {
+    console.log('[SheetService] Processing Registration for:', userData.email);
     try {
       let email = (userData.email || '').toLowerCase().trim();
       if (email && !email.includes('@')) {
@@ -170,7 +245,7 @@ const SheetService = {
       if (!email && userData.id) email = buildSyntheticEmail(userData.id, userData.role);
 
       const backendRole = toBackendRole(userData.role);
-      const res = await client.post('/api/auth/register', {
+      const payload = {
         name: userData.name.trim(),
         phone: userData.phone || undefined,
         email: email,
@@ -182,17 +257,23 @@ const SheetService = {
         vehicleNumber: userData.vehicleNumber,
         vehicleType: backendRole === 'driver' ? userData.vehicleType : undefined,
         vehicleDetails: backendRole === 'driver' ? (userData.vehicleDetails || userData.vehicleNumber) : undefined,
-      });
+      };
+
+      console.log('[SheetService] Sending Register Request...');
+      const res = await client.post('/api/auth/register', payload);
 
       if (res?.data?.success) {
+        console.log('[SheetService] Registration Success!');
         const u = { ...res.data.data.user, role: toAppRole(res.data.data.user.role) };
         await AsyncStorage.setItem(storageKeys.token, res.data.data.accessToken);
         await AsyncStorage.setItem(storageKeys.user, JSON.stringify(u));
         SheetService.currentUser = u;
         return { ...res.data, data: { ...res.data.data, user: u } };
       }
+      console.warn('[SheetService] Registration Denied:', res?.data?.message);
       return res?.data || { success: false, message: 'Registration failed' };
     } catch (err) {
+      console.error('[SheetService] Registration Exception:', err.message);
       return { success: false, message: extractError(err, 'Registration failed') };
     }
   },
@@ -259,6 +340,7 @@ const SheetService = {
   },
 
   loginUser: async (idOrEmail, password, selectedRole) => {
+    console.log('[SheetService] Attempting Login for:', idOrEmail, `as ${selectedRole}`);
     try {
       let email = String(idOrEmail || '').toLowerCase().trim();
       const backendRole = toBackendRole(selectedRole);
@@ -266,8 +348,11 @@ const SheetService = {
       // If no email @, we keep synthetic for legacy but we definitely want to send role now
       if (!email.includes('@')) email = buildSyntheticEmail(idOrEmail, selectedRole);
 
+      console.log('[SheetService] Sending Login Request to:', `/api/auth/login`);
       const res = await client.post('/api/auth/login', { email, password, role: backendRole });
+      
       if (res.data?.success) {
+        console.log('[SheetService] Login Success!');
         const u = { ...res.data.data.user, role: toAppRole(res.data.data.user.role) };
 
         await AsyncStorage.setItem(storageKeys.token, res.data.data.accessToken);
@@ -275,8 +360,10 @@ const SheetService = {
         SheetService.currentUser = u;
         return { ...res.data, data: { ...res.data.data, user: u } };
       }
+      console.warn('[SheetService] Login Denied:', res.data?.message);
       return res.data;
     } catch (err) {
+      console.error('[SheetService] Login Exception:', err.message);
       return { success: false, message: extractError(err, 'Login failed') };
     }
   },
@@ -299,6 +386,7 @@ const SheetService = {
     } catch { }
     await AsyncStorage.removeItem(storageKeys.token);
     await AsyncStorage.removeItem(storageKeys.user);
+    await AsyncStorage.removeItem('chosenRole');
     SheetService.currentUser = null;
   },
 

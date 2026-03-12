@@ -14,11 +14,12 @@ import { bi } from '../components/AppIcon';
 import BrandMark from '../components/BrandMark';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../api/SheetService';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const LoginScreen = ({ navigation, route }) => {
+const LoginScreen = ({ navigation, route, setUser }) => {
     const params = route?.params || {};
     const theme = useTheme();
     const [role, setRole] = useState(params.role || 'user');
@@ -56,6 +57,8 @@ const LoginScreen = ({ navigation, route }) => {
             const res = await SheetService.loginUser(email.trim(), password.trim(), role);
 
             if (res.success) {
+                await AsyncStorage.setItem('chosenRole', role);
+                if (setUser) setUser(res.data.user);
                 if (role === 'biker') {
                     navigation.replace('BikerApp');
                 } else {
@@ -83,6 +86,8 @@ const LoginScreen = ({ navigation, route }) => {
         });
 
         if (res?.success) {
+            await AsyncStorage.setItem('chosenRole', role);
+            if (setUser) setUser(res.data.user);
             navigation.replace(role === 'biker' ? 'BikerApp' : 'MainApp');
         } else {
             setError(res?.message || `Failed to sign in with ${providerName}. Try again.`);
@@ -215,7 +220,7 @@ const LoginScreen = ({ navigation, route }) => {
                                 left={<TextInput.Icon icon={bi('mail')} />}
                                 style={styles.input}
                                 outlineColor="rgba(255,255,255,0.1)"
-                                activeOutlineColor="#00FD3F"
+                                activeOutlineColor="#3277FF"
                                 theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
@@ -229,7 +234,7 @@ const LoginScreen = ({ navigation, route }) => {
                                 right={<TextInput.Icon icon={bi(secureText ? 'eye-off' : 'eye')} onPress={() => setSecureText(!secureText)} forceTextInputFocus={false} />}
                                 style={styles.input}
                                 outlineColor="rgba(255,255,255,0.1)"
-                                activeOutlineColor="#00FD3F"
+                                activeOutlineColor="#3277FF"
                                 theme={{ colors: { background: 'rgba(255,255,255,0.02)', text: '#FFF', placeholder: '#666' } }}
                             />
 
@@ -314,8 +319,8 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: '#333', backgroundColor: 'rgba(255,255,255,0.02)', gap: 4,
     },
     roleButtonActive: {
-        backgroundColor: '#00FD3F', borderColor: '#00FD3F',
-        shadowColor: '#00FD3F', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
+        backgroundColor: '#3277FF', borderColor: '#3277FF',
+        shadowColor: '#3277FF', shadowOpacity: 0.3, shadowRadius: 10, elevation: 5,
     },
     roleText: { color: '#888', fontWeight: 'normal', fontSize: 13 },
     roleTextActive: { color: '#000', fontWeight: '600', fontSize: 13 },
@@ -332,7 +337,7 @@ const styles = StyleSheet.create({
         marginBottom: 16, height: 50, fontSize: 14,
     },
     loginButton: {
-        backgroundColor: '#00FD3F', borderRadius: 12, height: 48,
+        backgroundColor: '#3277FF', borderRadius: 12, height: 48,
         alignItems: 'center', justifyContent: 'center', marginTop: 8,
     },
     loginButtonText: { color: '#000', fontSize: 15, fontWeight: 'bold' },
@@ -353,7 +358,7 @@ const styles = StyleSheet.create({
     providerButtonText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
     footer: { marginTop: 24, alignItems: 'center' },
     termsText: { color: '#777', fontSize: 14, textAlign: 'center' },
-    link: { color: '#00FD3F', fontWeight: '600' },
+    link: { color: '#3277FF', fontWeight: '600' },
 });
 
 export default LoginScreen;

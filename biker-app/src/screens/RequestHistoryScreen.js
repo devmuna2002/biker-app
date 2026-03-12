@@ -60,9 +60,9 @@ const RequestHistoryScreen = ({ navigation }) => {
             onPress={() => {
                 if (!item.dropoff) return;
                 navigation.navigate('MainApp', {
-                    screen: 'HomeDrawer',
+                    screen: 'MainDrawer',
                     params: {
-                        screen: 'Home',
+                        screen: 'Main',
                         params: {
                             reorder: {
                                 name: item.to,

@@ -3,7 +3,7 @@ import { View, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Alert, Di
 import { Text, IconButton, Surface, useTheme, Avatar, Divider } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SheetService from '../api/SheetService';
-import { bi } from '../components/AppIcon';
+import AppIcon, { bi } from '../components/AppIcon';
 
 const { width } = Dimensions.get('window');
 
@@ -11,76 +11,115 @@ const { width } = Dimensions.get('window');
 
 const statusColor = (status, theme) => {
     switch (String(status).toLowerCase()) {
-        case 'completed': return '#00FD3F';     // Vivid Green
-        case 'pending': return theme.colors.warning;
-        case 'cancelled': return '#FF4B4B';     // Vibrant Red
-        case 'in_transit': return '#3498DB';    // Vivid Blue
+        case 'completed': return '#3277FF';     // Blue
+        case 'pending': return '#5AC8FA';       // Light Blue
+        case 'cancelled': return '#FF4B4B';     // Keep Red for cancellation
+        case 'in_transit': return '#3277FF';
         default: return theme.colors.primary;
     }
 };
 
 const feeStatusColor = (status, theme) => {
     switch (String(status).toLowerCase()) {
-        case 'paid': return '#00FD3F';
+        case 'paid': return '#3277FF';
         case 'overdue': return '#FF4B4B';
-        default: return theme.colors.warning;
+        default: return '#5AC8FA';
     }
 };
 
 // ─── header ───────────────────────────────────────────────────────────────
 
-const HeaderSection = ({ greeting, user, navigation, theme, onRefresh, refreshing }) => (
+const HeaderSection = ({ user, theme, navigation }) => (
     <View style={styles.headerContainer}>
         <View style={styles.headerLeft}>
-            <Text style={[styles.greetingText, { color: theme.colors.secondaryText }]}>{greeting}</Text>
-            <Text style={[styles.userNameText, { color: theme.colors.text }]}>{user.name || 'Driver'}</Text>
-        </View>
-        <View style={styles.headerRight}>
-            <TouchableOpacity onPress={onRefresh} style={styles.headerBtnWrap} disabled={refreshing}>
-                <Surface style={[styles.headerBtn, { backgroundColor: theme.colors.surface }]} elevation={2}>
-                    <IconButton icon={bi('sync')} size={22} iconColor={theme.colors.text} style={{ margin: 0 }} loading={refreshing} />
-                </Surface>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('ProfileSettings')} style={styles.headerBtnWrap}>
+            <TouchableOpacity style={styles.avatarWrap} onPress={() => navigation.navigate('Profile')}>
                 {user.photo ? (
-                    <Avatar.Image size={44} source={{ uri: user.photo }} style={{ elevation: 2 }} />
+                    <Avatar.Image size={48} source={{ uri: user.photo }} />
                 ) : (
                     <Avatar.Text
-                        size={44}
-                        label={(user.name || 'D')[0].toUpperCase()}
+                        size={48}
+                        label={(user.name || 'O')[0].toUpperCase()}
                         backgroundColor={theme.colors.primary}
                         color="#fff"
-                        style={{ elevation: 2 }}
                     />
                 )}
+            </TouchableOpacity>
+            <View style={styles.headerTextWrap}>
+                <Text style={[styles.greetingText, { color: theme.colors.secondaryText }]}>Ready to deliver!</Text>
+                <Text style={[styles.userNameText, { color: theme.colors.text }]}>
+                    {user.name || 'Oliver Bennet'} 👋
+                </Text>
+            </View>
+        </View>
+        <View style={styles.headerRight}>
+            <TouchableOpacity style={styles.iconCircle} onPress={() => navigation.navigate('Help')}>
+                <IconButton icon={bi('help')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconCircle} onPress={() => navigation.navigate('Notifications')}>
+                <IconButton icon={bi('bell')} size={24} iconColor="#FFF" style={{ margin: 0 }} />
+                <View style={[styles.unreadBadge, { backgroundColor: theme.colors.error }]} />
             </TouchableOpacity>
         </View>
     </View>
 );
 
-// ─── earnings banner ───────────────────────────────────────────────────────
+// ─── grid metrics ─────────────────────────────────────────────────────────
 
-const EarningsBanner = ({ totalEarnings, totalTrips, theme }) => (
-    <Surface style={[styles.earningsBanner, { backgroundColor: theme.colors.primary }]} elevation={4}>
-        <View style={styles.earningsContent}>
-            <View>
-                <Text style={styles.earningsLabel}>Estimated Income</Text>
-                <Text style={styles.earningsValue}>
-                    ${totalEarnings.toFixed(2)}
-                </Text>
+const MetricCard = ({ label, value, icon, color, isPrimary, theme }) => (
+    <Surface
+        style={[
+            styles.metricCard,
+            { backgroundColor: isPrimary ? theme.colors.primary : theme.colors.surface }
+        ]}
+        elevation={2}
+    >
+        <View style={styles.metricTop}>
+            <View style={[styles.metricIconWrap, { backgroundColor: isPrimary ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.05)' }]}>
+                <AppIcon name={icon} size={28} color={isPrimary ? '#FFF' : theme.colors.primary} />
             </View>
-            <View style={styles.earningsIconWrap}>
-                <IconButton icon={bi('cash')} size={30} iconColor={theme.colors.primary} style={{ margin: 0 }} />
+            <View style={[styles.arrowCircle, { backgroundColor: '#FFF' }]}>
+                <IconButton icon={bi('arrow-top-right')} size={18} iconColor="#121212" style={{ margin: 0 }} />
             </View>
         </View>
-        <Divider style={{ backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 12 }} />
-        <View style={styles.earningsFooter}>
-            <View style={styles.earningsStat}>
-                <IconButton icon={bi('motorbike')} size={16} iconColor="#FFF" style={{ margin: 0 }} />
-                <Text style={styles.earningsStatText}>{totalTrips} Total Trips</Text>
-            </View>
+        <View style={styles.metricBottom}>
+            <Text style={[styles.metricLabel, { color: isPrimary ? 'rgba(255,255,255,0.8)' : theme.colors.secondaryText }]}>{label}</Text>
+            <Text style={[styles.metricValue, { color: '#FFF' }]}>{value}</Text>
         </View>
     </Surface>
+);
+
+const MetricsGrid = ({ totalOrders, totalEarnings, pendingCount, rating, theme }) => (
+    <View style={styles.metricsGrid}>
+        <MetricCard label="Total Deliveries" value={totalOrders} icon="package-variant-closed" color={theme.colors.primary} isPrimary theme={theme} />
+        <MetricCard label="Total Earnings" value={`$${totalEarnings.toLocaleString()}`} icon="cash" theme={theme} />
+        <MetricCard label="Average Rating" value={rating || '5.0'} icon="star" theme={theme} />
+        <MetricCard label="Pending Jobs" value={pendingCount} icon="time-outline" theme={theme} />
+    </View>
+);
+
+// ─── Performance Summary (Repurposed from Stock Overview) ───────────────────
+
+const SummaryPillar = ({ label, value, color, theme }) => (
+    <View style={styles.stockPillar}>
+        <View style={styles.stockPillarHeader}>
+            <View style={[styles.stockDot, { backgroundColor: color }]} />
+            <Text style={styles.stockPillarLabel}>{label}</Text>
+        </View>
+        <Text style={[styles.stockPillarValue, { color: '#FFF' }]}>{value}</Text>
+    </View>
+);
+
+const ActivitySummary = ({ completed, pending, cancelled, theme }) => (
+    <View style={styles.sectionContainer}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Performance Summary</Text>
+        <Surface style={[styles.stockContainer, { backgroundColor: theme.colors.surface }]} elevation={1}>
+            <SummaryPillar label="Completed" value={completed} color="#3277FF" theme={theme} />
+            <View style={styles.stockDivider} />
+            <SummaryPillar label="Pending" value={pending} color="#5AC8FA" theme={theme} />
+            <View style={styles.stockDivider} />
+            <SummaryPillar label="Cancelled" value={cancelled} color="#FF453A" theme={theme} />
+        </Surface>
+    </View>
 );
 
 // ─── stat card ──────────────────────────────────────────────────────────────
@@ -213,20 +252,15 @@ const DashboardScreen = ({ navigation }) => {
     const [calls, setCalls] = useState([]);
     const [refreshing, setRefreshing] = useState(false);
 
-    // Dropdown toggle states
-    const [ordersExpanded, setOrdersExpanded] = useState(true);
-    const [feesExpanded, setFeesExpanded] = useState(true);
-    const [moreExpanded, setMoreExpanded] = useState(false);
-
     const user = SheetService.currentUser || {};
 
     const loadData = useCallback(async () => {
         if (!user?.id) return;
         Promise.allSettled([
-            SheetService.dashboardInit({ lat: 0, lng: 0, radiusKm: 0 }, { timeout: 8000 }).then(r => setStats(r?.data?.stats || {})),
-            SheetService.getBikerOrders(user.id, { timeout: 8000 }).then(r => setOrders(Array.isArray(r?.data) ? r.data : (r?.data?.orders || []))),
-            SheetService.getBikerFees(user.id, { timeout: 8000 }).then(r => setFees(Array.isArray(r) ? r : (r?.data?.fees || []))),
-            SheetService.getCallHistory(user.id, { timeout: 8000 }).then(r => setCalls(Array.isArray(r?.data) ? r.data : []))
+            SheetService.dashboardInit({ lat: 0, lng: 0, radiusKm: 0 }, { timeout: 30000 }).then(r => setStats(r?.data?.stats || {})),
+            SheetService.getBikerOrders(user.id, { timeout: 30000 }).then(r => setOrders(Array.isArray(r?.data) ? r.data : (r?.data?.orders || []))),
+            SheetService.getBikerFees(user.id, { timeout: 30000 }).then(r => setFees(Array.isArray(r) ? r : (r?.data?.fees || []))),
+            SheetService.getCallHistory(user.id, { timeout: 30000 }).then(r => setCalls(Array.isArray(r?.data) ? r.data : []))
         ]).finally(() => setRefreshing(false));
     }, [user?.id]);
 
@@ -239,13 +273,12 @@ const DashboardScreen = ({ navigation }) => {
     }, [loadData]);
 
     const safeOrders = Array.isArray(orders) ? orders : [];
-    const safeFees = Array.isArray(fees) ? fees : [];
-    const safeCalls = Array.isArray(calls) ? calls : [];
-
+    
+    // Real Data Calculations
     const completedOrdersList = safeOrders.filter(o => String(o.status).toLowerCase() === 'completed');
-    const completedOrders = completedOrdersList.length;
-    const pendingOrders = safeOrders.filter(o => ['pending', 'assigned', 'picked_up', 'in_transit'].includes(String(o.status).toLowerCase())).length;
-    const cancelledOrders = safeOrders.filter(o => String(o.status).toLowerCase() === 'cancelled').length;
+    const completedCount = completedOrdersList.length;
+    const pendingCount = safeOrders.filter(o => ['pending', 'assigned', 'picked_up', 'in_transit'].includes(String(o.status).toLowerCase())).length;
+    const cancelledCount = safeOrders.filter(o => String(o.status).toLowerCase() === 'cancelled').length;
 
     const totalEarnings = completedOrdersList.reduce((sum, o) => {
         let amt = 0;
@@ -253,45 +286,49 @@ const DashboardScreen = ({ navigation }) => {
         else if (typeof o.price === 'string') amt = parseFloat(o.price.replace(/[^0-9.]/g, '')) || 0;
         else if (typeof o.fare === 'number') amt = o.fare;
         else if (typeof o.fare === 'string') amt = parseFloat(o.fare.replace(/[^0-9.]/g, '')) || 0;
-        return sum + amt;
+        return sum + (amt / 100); // Usually stored in cents
     }, 0);
-    const hour = new Date().getHours();
-    const greeting = hour < 12 ? 'Good morning,' : hour < 18 ? 'Good afternoon,' : 'Good evening,';
 
     const sections = [
         { type: 'header' },
-        { type: 'earnings' },
-        { type: 'quickStats' },
+        { type: 'metrics' },
+        { type: 'activity' },
 
-        { type: 'sectionLabel', id: 'orders-label', title: 'Recent Orders', count: safeOrders.length, isToggleable: true, isExpanded: ordersExpanded, onToggle: () => setOrdersExpanded(!ordersExpanded) },
-        ...(ordersExpanded ? (safeOrders.length ? safeOrders.slice(0, 3).map(o => ({ type: 'order', ...o, key: `o-${o.id}` })) : [{ type: 'empty', id: 'e-1', message: 'No orders yet.', icon: 'package-variant-closed' }]) : []),
-
-        { type: 'sectionLabel', id: 'fees-label', title: 'Payment History', count: safeFees.length, isToggleable: true, isExpanded: feesExpanded, onToggle: () => setFeesExpanded(!feesExpanded) },
-        ...(feesExpanded ? (safeFees.length ? safeFees.slice(0, 3).map(f => ({ type: 'fee', ...f, key: `f-${f.id || f.feeId}` })) : [{ type: 'empty', id: 'e-2', message: 'No fees processing.', icon: 'cash' }]) : []),
-
-        { type: 'sectionLabel', id: 'more-label', title: 'More Options', count: null, isToggleable: true, isExpanded: moreExpanded, onToggle: () => setMoreExpanded(!moreExpanded) },
-        ...(moreExpanded ? [{ type: 'accountActions' }] : []),
+        { 
+            type: 'sectionLabel', 
+            id: 'recent-label', 
+            title: 'Recent Deliveries', 
+            action: 'See all',
+            onAction: () => navigation.navigate('RequestHistory')
+        },
+        ...(safeOrders.length ? safeOrders.slice(0, 5).map(o => ({ type: 'order', ...o, key: `o-${o.orderId || o.id}` })) : [{ type: 'empty', id: 'e-1', message: 'No deliveries yet.', icon: 'package-variant-closed' }]),
 
         { type: 'footer' }
     ];
 
     const renderItem = ({ item }) => {
         switch (item.type) {
-            case 'header': return <HeaderSection greeting={greeting} user={user} navigation={navigation} theme={theme} onRefresh={loadData} refreshing={refreshing} />;
-            case 'earnings': return <EarningsBanner totalEarnings={totalEarnings} totalTrips={safeOrders.length} theme={theme} />;
-            case 'quickStats':
-                return (
-                    <View style={styles.statsRow}>
-                        <StatCard icon={bi('check-circle')} label="Completed" value={completedOrders} accentColor="#00FD3F" theme={theme} />
-                        <StatCard icon={bi('time')} label="Pending" value={pendingOrders} accentColor="#F39C12" theme={theme} />
-                        <StatCard icon={bi('close-circle')} label="Cancelled" value={cancelledOrders} accentColor="#FF4B4B" theme={theme} />
-                    </View>
-                );
+            case 'header': return <HeaderSection user={user} theme={theme} navigation={navigation} />;
+            case 'metrics': return (
+                <MetricsGrid 
+                    totalOrders={completedCount} 
+                    totalEarnings={totalEarnings} 
+                    pendingCount={pendingCount}
+                    rating={user?.rating}
+                    theme={theme} 
+                />
+            );
+            case 'activity': return (
+                <ActivitySummary 
+                    completed={completedCount} 
+                    pending={pendingCount} 
+                    cancelled={cancelledCount} 
+                    theme={theme} 
+                />
+            );
             case 'sectionLabel':
-                return <SectionHeader title={item.title} count={item.count} actionText={item.action} onAction={() => { }} theme={theme} isToggleable={item.isToggleable} isExpanded={item.isExpanded} onToggle={item.onToggle} />;
+                return <SectionHeader title={item.title} actionText={item.action} onAction={item.onAction} theme={theme} />;
             case 'order': return <OrderRow item={item} theme={theme} />;
-            case 'fee': return <FeeRow item={item} theme={theme} />;
-            case 'call': return <CallRow item={item} theme={theme} />;
             case 'empty':
                 return (
                     <View style={styles.emptyWrap}>
@@ -299,39 +336,20 @@ const DashboardScreen = ({ navigation }) => {
                         <Text style={[styles.emptyText, { color: theme.colors.secondaryText }]}>{item.message}</Text>
                     </View>
                 );
-            case 'accountActions':
-                return (
-                    <Surface style={[styles.listCard, { backgroundColor: theme.colors.surface, borderColor: 'rgba(255, 75, 75, 0.2)', borderWidth: 1 }]} elevation={1}>
-                        <TouchableOpacity
-                            onPress={() => Alert.alert('Delete Account', 'Are you completely sure? This action is permanent and erases all data.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete Forever', style: 'destructive', onPress: async () => { const r = await SheetService.deleteAccount(user.id); if (r?.success) navigation.replace('Login'); } }])}
-                            style={styles.listCardRow}
-                            activeOpacity={0.7}
-                        >
-                            <View style={[styles.listIconBox, { backgroundColor: 'rgba(255, 75, 75, 0.15)' }]}>
-                                <IconButton icon={bi('trash')} size={24} iconColor="#FF4B4B" style={{ margin: 0 }} />
-                            </View>
-                            <View style={styles.listCardContent}>
-                                <Text style={[styles.listCardId, { color: '#FF4B4B' }]}>Delete Account</Text>
-                                <Text style={[styles.listCardSub, { color: theme.colors.secondaryText }]}>Permanently erase your data</Text>
-                            </View>
-                            <IconButton icon={bi('chevron-right')} size={20} iconColor={theme.colors.secondaryText} style={{ margin: 0 }} />
-                        </TouchableOpacity>
-                    </Surface>
-                );
-            case 'footer': return <View style={{ height: 40 }} />;
+            case 'footer': return <View style={{ height: 120 }} />;
             default: return null;
         }
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <SafeAreaView style={[styles.container, { backgroundColor: '#000' }]}>
             <FlatList
                 data={sections}
                 keyExtractor={(item, idx) => item.key || item.id || item.type + idx}
                 renderItem={renderItem}
                 contentContainerStyle={styles.list}
                 showsVerticalScrollIndicator={false}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }} tintColor={theme.colors.primary} />}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }} tintColor="#3277FF" />}
             />
         </SafeAreaView>
     );
@@ -339,54 +357,51 @@ const DashboardScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    list: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 20 },
+    list: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 20 },
 
     headerContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, marginTop: 4 },
-    headerLeft: { flex: 1 },
-    greetingText: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-    userNameText: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+    headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    avatarWrap: { borderRadius: 24, overflow: 'hidden', backgroundColor: '#121212' },
+    headerTextWrap: {},
+    greetingText: { fontSize: 13, fontWeight: '500', marginBottom: 2 },
+    userNameText: { fontSize: 18, fontWeight: '800' },
     headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    headerBtnWrap: {},
-    headerBtn: { borderRadius: 24, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    iconCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#121212', alignItems: 'center', justifyContent: 'center' },
+    unreadBadge: { position: 'absolute', top: 12, right: 12, width: 8, height: 8, borderRadius: 4, borderWidth: 2, borderColor: '#121212' },
 
-    earningsBanner: { borderRadius: 20, padding: 20, marginBottom: 24 },
-    earningsContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    earningsLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 14, fontWeight: '600', marginBottom: 4 },
-    earningsValue: { color: '#FFF', fontSize: 38, fontWeight: '900', letterSpacing: -1 },
-    earningsIconWrap: { backgroundColor: '#FFF', borderRadius: 16, width: 52, height: 52, alignItems: 'center', justifyContent: 'center' },
-    earningsFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    earningsStat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    earningsStatText: { color: '#FFF', fontSize: 13, fontWeight: '600' },
-    earningsAction: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-    earningsActionText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
+    metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginBottom: 24 },
+    metricCard: { width: (width - 56) / 2, height: (width - 56) / 2, borderRadius: 28, padding: 20, justifyContent: 'space-between' },
+    metricTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    metricIconWrap: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    arrowCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+    metricBottom: {},
+    metricLabel: { fontSize: 13, fontWeight: '600', marginBottom: 4 },
+    metricValue: { fontSize: 22, fontWeight: '900' },
 
-    statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24, gap: 12 },
-    statCard: { flex: 1, borderRadius: 18, padding: 14 },
-    statTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-    statIconWrap: { borderRadius: 12, padding: 2 },
-    statValue: { fontSize: 22, fontWeight: '800' },
-    statLabel: { fontSize: 12, fontWeight: '600' },
+    sectionContainer: { marginBottom: 24 },
+    sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: 16 },
+    stockContainer: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 24 },
+    stockPillar: { flex: 1, alignItems: 'center' },
+    stockPillarHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 },
+    stockDot: { width: 8, height: 8, borderRadius: 4 },
+    stockPillarLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '800' },
+    stockPillarValue: { fontSize: 18, fontWeight: '900' },
+    stockDivider: { width: 1, height: 30, backgroundColor: 'rgba(255,255,255,0.05)', marginHorizontal: 4 },
 
-    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 16 },
-    sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    sectionTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.5 },
-    countBubble: { borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 },
-    countText: { fontSize: 12, fontWeight: '800' },
+    sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    sectionTitle: { fontSize: 20, fontWeight: '800' },
 
-    listCard: { borderRadius: 16, marginBottom: 12, padding: 12 },
-    listCardRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-    listIconBox: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    listCard: { borderRadius: 24, marginBottom: 12, padding: 16 },
+    listCardRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+    listIconBox: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
     listCardContent: { flex: 1 },
-    listCardId: { fontSize: 15, fontWeight: '700', marginBottom: 2 },
+    listCardId: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
     listCardSub: { fontSize: 13, fontWeight: '500' },
     badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    badgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-    feeAmount: { fontSize: 16, fontWeight: '800', marginRight: 4 },
+    badgeText: { fontSize: 10, fontWeight: '800' },
 
-    emptyWrap: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(150,150,150,0.1)', borderStyle: 'dashed', marginBottom: 16 },
-    emptyText: { fontSize: 14, fontWeight: '600', marginTop: -8 },
-
-    deleteBtn: { marginTop: 32, borderWidth: 1, borderColor: '#FF4B4B', borderRadius: 16, padding: 16, alignItems: 'center', backgroundColor: 'rgba(255, 75, 75, 0.05)' },
+    emptyWrap: { alignItems: 'center', paddingVertical: 32, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderStyle: 'dashed' },
+    emptyText: { fontSize: 14, fontWeight: '600' },
 });
 
 export default DashboardScreen;
